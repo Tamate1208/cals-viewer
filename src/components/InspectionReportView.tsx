@@ -9,8 +9,7 @@ import {
   CheckCheck,
   FileJson,
   Upload,
-  RotateCcw,
-  FileText
+  RotateCcw
 } from 'lucide-react';
 import type { ConstructionInfo, DrawingItem, InspectionRecord, PhotoItem, ReportItem } from '../types/cals';
 
@@ -296,70 +295,6 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
               </div>
             </div>
           </div>
-
-          {/* 指摘事項ハイライトカード */}
-          {issueRecords.length > 0 && (
-            <div className="bg-rose-950/30 border border-rose-800/80 rounded-xl p-4 print:border-rose-400 print:bg-transparent print-avoid-break">
-              <h3 className="text-xs sm:text-sm font-bold text-rose-300 print:text-rose-900 mb-3 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 text-rose-400 print:text-rose-700" />
-                <span>要確認・指摘事項 ({issueRecords.length} 件)</span>
-              </h3>
-              <div className="space-y-3">
-                {issueRecords.map((r) => {
-                  const meta = resolveMeta(r);
-                  return (
-                    <div key={r.targetId} className="bg-slate-950/90 p-3.5 rounded-xl border border-rose-900/60 text-xs shadow-sm print:bg-white print:border print:border-rose-400 print:text-black print-avoid-break">
-                      <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold px-2 py-0.5 rounded text-[10px] bg-rose-950/80 text-rose-300 border border-rose-800/80 print:bg-rose-100 print:text-rose-800 print:border-rose-300">
-                            {r.targetType === 'photo' ? (constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真') : r.targetType === 'report' ? '報告書類' : '完成図面'}
-                          </span>
-                          {meta.groupTitle && (
-                            <span className="text-slate-300 font-bold text-xs sm:text-sm print:text-gray-900">
-                              {meta.groupTitle}
-                            </span>
-                          )}
-                          {meta.groupTitle && <span className="text-slate-600 print:text-gray-400">›</span>}
-                          <span className="text-white font-bold text-xs sm:text-sm print:text-black">
-                            {r.targetTitle}
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 print:text-gray-500 font-mono">{r.updatedAt}</span>
-                      </div>
-
-                      {/* ファイル名・詳細メタデータバッジ */}
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400 print:text-gray-700 bg-slate-900/80 p-2 rounded-lg border border-slate-800 mb-2.5 print:bg-gray-50 print:border-gray-300">
-                        {meta.fileName && (
-                          <div className="flex items-center gap-1 font-mono text-blue-300 print:text-blue-700 font-bold">
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>{meta.fileName}</span>
-                          </div>
-                        )}
-                        {meta.fileRole && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 print:text-gray-500">役割:</span>
-                            <span className="font-medium text-slate-200 print:text-gray-900">{meta.fileRole}</span>
-                          </div>
-                        )}
-                        {meta.locationOrDate && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 print:text-gray-500">日時/測点:</span>
-                            <span className="font-medium text-slate-200 print:text-gray-900">{meta.locationOrDate}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 指摘メモ本文 */}
-                      <div className="text-rose-200 bg-rose-950/50 p-2.5 rounded-lg border border-rose-900/50 font-medium print:bg-rose-50 print:text-rose-900 print:border-rose-300 leading-relaxed">
-                        <span className="font-bold text-rose-300 print:text-rose-800 mr-1.5">指摘メモ:</span>
-                        {r.notes || '（指摘内容未記入）'}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* 全記録テーブル */}
           <div className="pt-2">
