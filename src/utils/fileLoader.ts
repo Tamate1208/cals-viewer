@@ -26,6 +26,20 @@ class FastFileIndex {
   private exactPathMap = new Map<string, FileItem>();
   private fileNameMap = new Map<string, FileItem[]>();
   public xmlItems: FileItem[] = [];
+  // 同一 Blob に対する Blob URL の重複発行を防ぐキャッシュ
+  private urlCache = new Map<Blob, string>();
+
+  /**
+   * Blob から Blob URL を取得（同一 Blob には同じ URL を返す）
+   */
+  public toUrl(blob: Blob): string {
+    let url = this.urlCache.get(blob);
+    if (!url) {
+      url = URL.createObjectURL(blob);
+      this.urlCache.set(blob, url);
+    }
+    return url;
+  }
 
   constructor(items: FileItem[]) {
     for (const item of items) {
@@ -117,7 +131,7 @@ class FastFileIndex {
           for (const fn of fileNameVariations) {
             const tryPath = `${pfx}${h ? h + '/' : ''}${sub}${fn}`;
             const found = this.exactPathMap.get(tryPath);
-            if (found) return URL.createObjectURL(found.blob);
+            if (found) return this.toUrl(found.blob);
           }
         }
       }
@@ -127,25 +141,25 @@ class FastFileIndex {
     if (basePrefix) {
       const tryWithPrefix = `${basePrefix.replace(/\\/g, '/').toLowerCase()}${cleanPath}`;
       const found = this.exactPathMap.get(tryWithPrefix);
-      if (found) return URL.createObjectURL(found.blob);
+      if (found) return this.toUrl(found.blob);
     }
     const foundDirect = this.exactPathMap.get(cleanPath);
-    if (foundDirect) return URL.createObjectURL(foundDirect.blob);
+    if (foundDirect) return this.toUrl(foundDirect.blob);
 
     // 3. 純粋なファイル名でのマッチ (fileNameMap)
     for (const fn of fileNameVariations) {
       const matches = this.fileNameMap.get(fn);
       if (matches && matches.length > 0) {
         if (matches.length === 1) {
-          return URL.createObjectURL(matches[0].blob);
+          return this.toUrl(matches[0].blob);
         }
         // 複数ある場合はフォルダヒントを含むものを最優先
         if (folderHint) {
           const hintLower = folderHint.toLowerCase();
           const preferred = matches.find(m => m.relativePath.toLowerCase().includes(hintLower));
-          if (preferred) return URL.createObjectURL(preferred.blob);
+          if (preferred) return this.toUrl(preferred.blob);
         }
-        return URL.createObjectURL(matches[0].blob);
+        return this.toUrl(matches[0].blob);
       }
     }
 
@@ -156,9 +170,9 @@ class FastFileIndex {
           if (folderHint) {
             const hintLower = folderHint.toLowerCase();
             const preferred = items.find(m => m.relativePath.toLowerCase().includes(hintLower));
-            if (preferred) return URL.createObjectURL(preferred.blob);
+            if (preferred) return this.toUrl(preferred.blob);
           }
-          if (items.length > 0) return URL.createObjectURL(items[0].blob);
+          if (items.length > 0) return this.toUrl(items[0].blob);
         }
       }
     }
@@ -243,23 +257,43 @@ export async function loadFromZip(
   const loadedZip = await zip.loadAsync(zipFile);
   const items: FileItem[] = [];
 
-  const entries = Object.entries(loadedZip.files);
+  const entries = Object.entries(loadedZip.files).filter(([, zipEntry]) => !zipEntry.dir);
   onProgress?.(`全 ${entries.length} 件のエントリを展開中...`);
 
-  for (const [relativePath, zipEntry] of entries) {
-    if (zipEntry.dir) continue;
-    const blob = await zipEntry.async('blob');
-    const name = relativePath.split('/').pop() || relativePath;
-    items.push({
-      name,
-      relativePath,
-      blob,
-    });
+  // 一定数ずつ並列展開（格納順は元のエントリ順を維持）
+  const CONCURRENCY = 8;
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const chunk = entries.slice(i, i + CONCURRENCY);
+    const chunkItems = await Promise.all(
+      chunk.map(async ([relativePath, zipEntry]) => ({
+        name: relativePath.split('/').pop() || relativePath,
+        relativePath,
+        blob: await zipEntry.async('blob'),
+      }))
+    );
+    items.push(...chunkItems);
   }
 
   const rootFolderName = zipFile.name.replace(/\.zip$/i, '');
   const index = new FastFileIndex(items);
   return processIndex(index, rootFolderName, onProgress);
+}
+
+/**
+ * データセットが保持する Blob URL をすべて解放する
+ * （別の電子納品データへ切り替える際のメモリ解放用。data: URL 等は対象外）
+ */
+export function revokeDatasetBlobUrls(dataset: DeliveryDataset | null): void {
+  if (!dataset) return;
+  const urls = new Set<string>();
+  const collect = (url?: string) => {
+    if (url && url.startsWith('blob:')) urls.add(url);
+  };
+  dataset.photos.forEach(p => collect(p.fileUrl));
+  dataset.reports.forEach(r => collect(r.fileUrl));
+  dataset.drawings.forEach(d => collect(d.fileUrl));
+  dataset.otherFiles.forEach(f => collect(f.fileUrl));
+  urls.forEach(url => URL.revokeObjectURL(url));
 }
 
 /**
@@ -413,7 +447,7 @@ async function processConsignmentIndex(
       date: '',
       fileName: img.name,
       filePath: img.relativePath,
-      fileUrl: URL.createObjectURL(img.blob),
+      fileUrl: index.toUrl(img.blob),
       blackboardItems: [],
     }));
   }
@@ -635,7 +669,7 @@ async function processConstructionIndex(
       date: '',
       fileName: img.name,
       filePath: img.relativePath,
-      fileUrl: URL.createObjectURL(img.blob),
+      fileUrl: index.toUrl(img.blob),
       blackboardItems: [],
     }));
   }
@@ -687,7 +721,7 @@ async function processConstructionIndex(
       type: '報告書類',
       fileName: pdf.name,
       filePath: pdf.relativePath,
-      fileUrl: URL.createObjectURL(pdf.blob),
+      fileUrl: index.toUrl(pdf.blob),
     }));
   }
 
@@ -734,7 +768,7 @@ async function processConstructionIndex(
       type: '完成図面',
       fileName: pdf.name,
       filePath: pdf.relativePath,
-      fileUrl: URL.createObjectURL(pdf.blob),
+      fileUrl: index.toUrl(pdf.blob),
     }));
   }
 

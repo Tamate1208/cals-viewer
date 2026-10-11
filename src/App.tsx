@@ -1,5 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import type { DeliveryDataset, InspectionRecord } from './types/cals';
+import { revokeDatasetBlobUrls } from './utils/fileLoader';
 
 import { Header } from './components/Header';
 import { FileDropZone } from './components/FileDropZone';
@@ -25,6 +26,23 @@ export const App: React.FC = () => {
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
   const [docTab, setDocTab] = useState<'reports' | 'drawings' | 'index'>('reports');
+
+  // トースト表示（前回の非表示タイマーを解除してから表示し、重なりで早期に消えるのを防ぐ）
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (message: string, durationMs: number) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToastMessage(message);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, durationMs);
+  };
+
+  // フォルダ選択画面へ戻る（前データの Blob URL を解放）
+  const handleOpenFolder = () => {
+    revokeDatasetBlobUrls(dataset);
+    setDataset(null);
+  };
 
   // データセットがロードされた時に初期化 & 検査対象選択の判定
   const handleDatasetLoaded = (newDataset: DeliveryDataset) => {
@@ -59,8 +77,7 @@ export const App: React.FC = () => {
         if (count > 0) {
           const okC = Object.values(parsed).filter((r: any) => r.status === 'ok').length;
           const issueC = Object.values(parsed).filter((r: any) => r.status === 'issue').length;
-          setToastMessage(`前回の検査記録（適: ${okC}件 / 指摘: ${issueC}件）を自動復元しました`);
-          setTimeout(() => setToastMessage(null), 4000);
+          showToast(`前回の検査記録（適: ${okC}件 / 指摘: ${issueC}件）を自動復元しました`, 4000);
         }
       } else {
         setInspectionRecords({});
@@ -198,8 +215,7 @@ export const App: React.FC = () => {
       console.warn('localStorage save failed:', e);
     }
 
-    setToastMessage(`未確認の ${uninspected} 件を一括で「適」に更新しました`);
-    setTimeout(() => setToastMessage(null), 3500);
+    showToast(`未確認の ${uninspected} 件を一括で「適」に更新しました`, 3500);
   };
 
   // 検査記録のリセット（初期化）
@@ -220,8 +236,7 @@ export const App: React.FC = () => {
       console.warn('localStorage remove failed:', e);
     }
 
-    setToastMessage('検査記録をリセットしました');
-    setTimeout(() => setToastMessage(null), 3000);
+    showToast('検査記録をリセットしました', 3000);
   };
 
   // 検査記録のJSONバックアップ読込（インポート）
@@ -234,8 +249,7 @@ export const App: React.FC = () => {
     } catch (e) {
       console.warn('localStorage save failed:', e);
     }
-    setToastMessage(`バックアップから ${Object.keys(importedRecords).length} 件の記録を復元しました`);
-    setTimeout(() => setToastMessage(null), 4000);
+    showToast(`バックアップから ${Object.keys(importedRecords).length} 件の記録を復元しました`, 4000);
   };
 
   // 別窓を閉じるハンドラ（参照を固定）
@@ -270,7 +284,7 @@ export const App: React.FC = () => {
               totalItemsCount={totalItemsCount}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
-              onOpenFolderClick={() => setDataset(null)}
+              onOpenFolderClick={handleOpenFolder}
               onOpenReportModal={() => setShowReportModal(true)}
               hasDocs={hasDocs}
               hasPhotos={hasPhotos}
