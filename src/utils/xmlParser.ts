@@ -494,7 +494,9 @@ export function parseReportXml(xmlString: string): ReportItem[] {
         const fileContent = getElementText(fNode, 'オリジナルファイル内容', '内容');
 
         if (fileName) {
-          const detailSuffix = fileContent ? ` (${fileContent})` : fileJpName ? ` (${fileJpName})` : '';
+          const isKagami = /鏡|かがみ/i.test(fileContent) || (fIdx === 0 && !fileContent);
+          const role = isKagami ? '鑑' : (fileContent || fileJpName || `本文 ${fIdx + 1}`);
+          const detailSuffix = ` (${role})`;
           items.push({
             id: `MEET_${serial || mIndex + 1}_${fIdx + 1}`,
             title: `${meetName}${detailSuffix}`,
@@ -503,6 +505,8 @@ export function parseReportXml(xmlString: string): ReportItem[] {
             filePath: fileName,
             createDate: date,
             summary: `${meetClass} / ${meetName} ${detailSuffix}`,
+            groupTitle: meetName,
+            fileRole: role,
           });
         }
       });
@@ -517,6 +521,8 @@ export function parseReportXml(xmlString: string): ReportItem[] {
           filePath: fileName,
           createDate: date,
           summary: `${meetClass} / ${meetName}`,
+          groupTitle: meetName,
+          fileRole: '鑑・本文',
         });
       }
     }
@@ -538,7 +544,9 @@ export function parseReportXml(xmlString: string): ReportItem[] {
         const fileJpName = getElementText(fNode, '施工計画書オリジナルファイル日本語名', 'オリジナルファイル日本語名');
 
         if (fileName) {
-          const detailSuffix = fileContent ? ` (${fileContent})` : fileJpName ? ` (${fileJpName})` : '';
+          const isKagami = /鏡|かがみ/i.test(fileContent) || (fIdx === 0 && !fileContent);
+          const role = isKagami ? '鑑' : (fileContent || fileJpName || `本文 ${fIdx + 1}`);
+          const detailSuffix = ` (${role})`;
           items.push({
             id: `PLAN_${serial || pIndex + 1}_${fIdx + 1}`,
             title: `${planName}${detailSuffix}`,
@@ -547,6 +555,8 @@ export function parseReportXml(xmlString: string): ReportItem[] {
             filePath: fileName,
             createDate: date,
             summary: `施工計画書: ${planName} ${detailSuffix}`,
+            groupTitle: planName,
+            fileRole: role,
           });
         }
       });
@@ -561,6 +571,8 @@ export function parseReportXml(xmlString: string): ReportItem[] {
           filePath: fileName,
           createDate: date,
           summary: `施工計画書: ${planName}`,
+          groupTitle: planName,
+          fileRole: '鑑・本文',
         });
       }
     }
@@ -580,7 +592,9 @@ export function parseReportXml(xmlString: string): ReportItem[] {
         const fileContent = getElementText(fNode, 'オリジナルファイル内容', '内容');
 
         if (fileName) {
-          const detailSuffix = fileContent ? ` (${fileContent})` : '';
+          const isKagami = /鏡|かがみ/i.test(fileContent) || (fIdx === 0 && !fileContent);
+          const role = isKagami ? '鑑' : (fileContent || `添付 ${fIdx + 1}`);
+          const detailSuffix = ` (${role})`;
           items.push({
             id: `OTHRS_${oIndex + 1}_${fIdx + 1}`,
             title: `${docName}${detailSuffix}`,
@@ -589,6 +603,8 @@ export function parseReportXml(xmlString: string): ReportItem[] {
             filePath: fileName,
             createDate: date,
             summary: `その他資料: ${docName} ${detailSuffix}`,
+            groupTitle: docName,
+            fileRole: role,
           });
         }
       });
@@ -603,6 +619,8 @@ export function parseReportXml(xmlString: string): ReportItem[] {
           filePath: fileName,
           createDate: date,
           summary: `その他資料: ${docName}`,
+          groupTitle: docName,
+          fileRole: '本紙',
         });
       }
     }

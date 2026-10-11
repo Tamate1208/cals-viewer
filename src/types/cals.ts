@@ -43,6 +43,8 @@ export interface ReportItem {
   fileUrl?: string;               // ブラウザ内 Blob URL
   createDate?: string;            // 作成年月日
   summary?: string;               // 要約・概要
+  groupTitle?: string;            // 帳票グループ名称 (例: 9月度履行報告書, 施工計画書(当初))
+  fileRole?: string;              // ファイル役割 (鑑 / 本文 / 添付資料 等)
 }
 
 export interface DrawingItem {

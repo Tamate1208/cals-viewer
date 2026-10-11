@@ -257,6 +257,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="text-xs font-medium leading-snug line-clamp-2">
+                            {report.fileRole && (
+                              <span className={`inline-block mr-1 text-[10px] px-1.5 py-0.2 rounded font-semibold ${
+                                report.fileRole === '鑑' 
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
+                                  : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                              }`}>
+                                {report.fileRole}
+                              </span>
+                            )}
                             {report.title}
                           </div>
                           <div className="flex items-center gap-1.5 mt-1 text-[10px] text-slate-400">

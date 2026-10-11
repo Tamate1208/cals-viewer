@@ -12,7 +12,10 @@ import {
   PanelLeftClose, 
   PanelLeftOpen, 
   Search, 
-  Layers
+  Layers,
+  ChevronsDown,
+  ChevronsUp,
+  Tag
 } from 'lucide-react';
 import type { DrawingItem, InspectionRecord, PhotoItem, ReportItem } from '../types/cals';
 
@@ -45,102 +48,159 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   const [activeTab, setActiveTab] = useState<'docs' | 'photos'>('docs');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // フォルダの展開/折りたたみ状態を管理
+  // フォルダの展開/折りたたみ状態を管理（デフォルトは閉じた状態）
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
 
   const toggleFolder = (key: string) => {
     setExpandedFolders(prev => ({
       ...prev,
-      [key]: prev[key] === undefined ? false : !prev[key], // デフォルトは展開(true)とするため反転
+      [key]: !prev[key],
     }));
   };
 
   const isFolderOpen = (key: string) => {
-    return expandedFolders[key] !== false; // デフォルト展開
+    // 検索入力時は該当項目が見えるよう自動展開
+    if (searchQuery.trim() !== '') return true;
+    return !!expandedFolders[key];
   };
 
-  // 書類の種別グループ化
+  // すべて展開
+  const handleExpandAll = () => {
+    const allKeys: Record<string, boolean> = {};
+    // 書類キー
+    Object.entries(docGroups).forEach(([cat, groupMap]) => {
+      allKeys[`doc_cat_${cat}`] = true;
+      Object.keys(groupMap).forEach(gt => {
+        allKeys[`doc_sub_${cat}_${gt}`] = true;
+      });
+    });
+    // 写真キー
+    Object.entries(photoGroups).forEach(([wt, cats]) => {
+      allKeys[`photo_wt_${wt}`] = true;
+      Object.entries(cats).forEach(([cat, titles]) => {
+        allKeys[`photo_cat_${wt}_${cat}`] = true;
+        Object.keys(titles).forEach(t => {
+          allKeys[`photo_title_${wt}_${cat}_${t}`] = true;
+        });
+      });
+    });
+    setExpandedFolders(allKeys);
+  };
+
+  // すべて閉じる
+  const handleCollapseAll = () => {
+    setExpandedFolders({});
+  };
+
+  // ==================== 書類ツリーの階層化 ====================
+  // 帳票大分類 (MEET / PLAN / OTHRS / 図面) -> 帳票件名 (9月度履行報告書 等) -> [鑑, 本文...]
   const docGroups = useMemo(() => {
-    const groups: Record<string, { type: 'report' | 'drawing'; items: (ReportItem | DrawingItem)[] }> = {};
+    const groups: Record<string, Record<string, { type: 'report' | 'drawing'; items: (ReportItem | DrawingItem)[] }>> = {};
 
     reports.forEach(r => {
       const typeName = r.type || '一般書類';
+      const groupName = r.groupTitle || r.title || '書類';
+
       if (!groups[typeName]) {
-        groups[typeName] = { type: 'report', items: [] };
+        groups[typeName] = {};
       }
-      groups[typeName].items.push(r);
+      if (!groups[typeName][groupName]) {
+        groups[typeName][groupName] = { type: 'report', items: [] };
+      }
+      groups[typeName][groupName].items.push(r);
     });
 
     if (drawings.length > 0) {
-      groups['完成図面・施工図'] = { type: 'drawing', items: drawings };
+      groups['完成図面・設計図'] = {
+        '完成図面一式': { type: 'drawing', items: drawings },
+      };
     }
 
     return groups;
   }, [reports, drawings]);
 
-  // 写真の工種・写真区分グループ化
+  // ==================== 写真ツリーの階層化 ====================
+  // 工種 (砂防堰堤) -> 写真区分 (施工状況写真) -> 項目/タイトル (ICT掘削状況) -> 写真リスト
   const photoGroups = useMemo(() => {
-    const groups: Record<string, Record<string, PhotoItem[]>> = {};
+    const groups: Record<string, Record<string, Record<string, PhotoItem[]>>> = {};
 
     photos.forEach(p => {
       const workType = p.workType || '一般工種';
       const category = p.category || '施工中';
+      const titleGroup = p.title || '写真項目';
 
       if (!groups[workType]) {
         groups[workType] = {};
       }
       if (!groups[workType][category]) {
-        groups[workType][category] = [];
+        groups[workType][category] = {};
       }
-      groups[workType][category].push(p);
+      if (!groups[workType][category][titleGroup]) {
+        groups[workType][category][titleGroup] = [];
+      }
+      groups[workType][category][titleGroup].push(p);
     });
 
     return groups;
   }, [photos]);
 
-  // 検索フィルター
+  // 検索フィルター（書類）
   const filteredDocGroups = useMemo(() => {
     if (!searchQuery) return docGroups;
     const query = searchQuery.toLowerCase();
     const result: typeof docGroups = {};
 
-    Object.entries(docGroups).forEach(([groupName, data]) => {
-      const matched = data.items.filter(item => 
-        item.title.toLowerCase().includes(query) || groupName.toLowerCase().includes(query)
-      );
-      if (matched.length > 0) {
-        result[groupName] = { type: data.type, items: matched };
+    Object.entries(docGroups).forEach(([catName, groupMap]) => {
+      const matchedGroups: typeof groupMap = {};
+      Object.entries(groupMap).forEach(([gTitle, data]) => {
+        const matchedItems = data.items.filter(item => 
+          item.title.toLowerCase().includes(query) || 
+          gTitle.toLowerCase().includes(query) ||
+          catName.toLowerCase().includes(query)
+        );
+        if (matchedItems.length > 0) {
+          matchedGroups[gTitle] = { type: data.type, items: matchedItems };
+        }
+      });
+      if (Object.keys(matchedGroups).length > 0) {
+        result[catName] = matchedGroups;
       }
     });
+
     return result;
   }, [docGroups, searchQuery]);
 
+  // 検索フィルター（写真）
   const filteredPhotoGroups = useMemo(() => {
     if (!searchQuery) return photoGroups;
     const query = searchQuery.toLowerCase();
     const result: typeof photoGroups = {};
 
     Object.entries(photoGroups).forEach(([wt, cats]) => {
-      let hasMatch = false;
-      const matchedCats: Record<string, PhotoItem[]> = {};
-
-      Object.entries(cats).forEach(([cat, list]) => {
-        const matched = list.filter(p => 
-          p.title.toLowerCase().includes(query) || 
-          p.station?.toLowerCase().includes(query) ||
-          wt.toLowerCase().includes(query) ||
-          cat.toLowerCase().includes(query)
-        );
-        if (matched.length > 0) {
-          matchedCats[cat] = matched;
-          hasMatch = true;
+      const matchedCats: typeof cats = {};
+      Object.entries(cats).forEach(([cat, titles]) => {
+        const matchedTitles: typeof titles = {};
+        Object.entries(titles).forEach(([titleName, list]) => {
+          const matched = list.filter(p => 
+            p.title.toLowerCase().includes(query) || 
+            p.station?.toLowerCase().includes(query) ||
+            p.remarks?.toLowerCase().includes(query) ||
+            wt.toLowerCase().includes(query) ||
+            cat.toLowerCase().includes(query)
+          );
+          if (matched.length > 0) {
+            matchedTitles[titleName] = matched;
+          }
+        });
+        if (Object.keys(matchedTitles).length > 0) {
+          matchedCats[cat] = matchedTitles;
         }
       });
-
-      if (hasMatch) {
+      if (Object.keys(matchedCats).length > 0) {
         result[wt] = matchedCats;
       }
     });
+
     return result;
   }, [photoGroups, searchQuery]);
 
@@ -158,7 +218,9 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
 
         <button
           onClick={() => { setIsOpen(true); setActiveTab('docs'); }}
-          className={`p-2 rounded-lg transition mb-2 ${activeTab === 'docs' ? 'text-blue-400 bg-slate-800' : 'text-slate-500 hover:text-slate-300'}`}
+          className={`p-1.5 rounded-lg transition mb-2 ${
+            activeTab === 'docs' ? 'text-blue-400 bg-blue-600/20' : 'text-slate-500 hover:text-slate-300'
+          }`}
           title="書類ツリー"
         >
           <FileText className="w-4 h-4" />
@@ -166,7 +228,9 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
 
         <button
           onClick={() => { setIsOpen(true); setActiveTab('photos'); }}
-          className={`p-2 rounded-lg transition ${activeTab === 'photos' ? 'text-blue-400 bg-slate-800' : 'text-slate-500 hover:text-slate-300'}`}
+          className={`p-1.5 rounded-lg transition ${
+            activeTab === 'photos' ? 'text-blue-400 bg-blue-600/20' : 'text-slate-500 hover:text-slate-300'
+          }`}
           title="写真ツリー"
         >
           <ImageIcon className="w-4 h-4" />
@@ -186,13 +250,29 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
           <Layers className="w-4 h-4 text-blue-400" />
           <span>検査対象ツリー</span>
         </div>
-        <button
-          onClick={() => setIsOpen(false)}
-          className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition"
-          title="ツリーを閉じる"
-        >
-          <PanelLeftClose className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleExpandAll}
+            className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition"
+            title="すべて展開"
+          >
+            <ChevronsDown className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={handleCollapseAll}
+            className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition"
+            title="すべて閉じる"
+          >
+            <ChevronsUp className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setIsOpen(false)}
+            className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition ml-1"
+            title="ツリーパネルを隠す"
+          >
+            <PanelLeftClose className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* タブ切り替え: 書類・図面 / 工事写真 */}
@@ -228,7 +308,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
           <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
           <input
             type="text"
-            placeholder={activeTab === 'docs' ? "書類をツリー内検索..." : "工種・写真を検索..."}
+            placeholder={activeTab === 'docs' ? "書類・帳票を検索..." : "工種・項目・測点を検索..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-8 pr-2 py-1.5 bg-slate-900 border border-slate-800 rounded-md text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
@@ -239,83 +319,141 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
       {/* ツリーコンテンツ */}
       <div className="flex-1 overflow-y-auto p-2 text-xs divide-y divide-transparent">
         {activeTab === 'docs' ? (
-          /* ==================== 書類ツリー ==================== */
+          /* ==================== 書類ツリー (大分類 > 帳票名 > 鑑・本文) ==================== */
           Object.keys(filteredDocGroups).length === 0 ? (
             <div className="p-4 text-center text-slate-500 text-xs">該当する書類がありません</div>
           ) : (
             <div className="space-y-1">
-              {Object.entries(filteredDocGroups).map(([groupName, data]) => {
-                const folderKey = `doc_${groupName}`;
-                const open = isFolderOpen(folderKey);
-                const items = data.items;
+              {Object.entries(filteredDocGroups).map(([catName, groupMap]) => {
+                const catKey = `doc_cat_${catName}`;
+                const catOpen = isFolderOpen(catKey);
+                const totalInCat = Object.values(groupMap).reduce((acc, g) => acc + g.items.length, 0);
 
                 return (
-                  <div key={groupName} className="select-none">
-                    {/* フォルダ行 */}
+                  <div key={catName} className="select-none">
+                    {/* 第1階層: 帳票種別 (打合せ簿, 施工計画書, 完成図面 等) */}
                     <div
-                      onClick={() => toggleFolder(folderKey)}
-                      className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-300 font-medium group transition"
+                      onClick={() => toggleFolder(catKey)}
+                      className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
                     >
                       <div className="flex items-center gap-1.5 truncate">
-                        {open ? (
+                        {catOpen ? (
                           <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                         ) : (
                           <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                         )}
-                        {open ? (
-                          <FolderOpen className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        ) : (
-                          <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        )}
-                        <span className="truncate group-hover:text-white">{groupName}</span>
+                        <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                        <span className="truncate group-hover:text-white">{catName}</span>
                       </div>
-                      <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
-                        {items.length}
+                      <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
+                        {totalInCat}
                       </span>
                     </div>
 
-                    {/* 書類アイテムリスト */}
-                    {open && (
-                      <div className="ml-4 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
-                        {items.map((item) => {
-                          const isDrawing = data.type === 'drawing';
-                          const isSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
-                          const rec = inspectionRecords[item.id];
+                    {/* 第2階層: 帳票件名 (9月度履行報告書, 施工計画書(当初) 等) */}
+                    {catOpen && (
+                      <div className="ml-3 pl-2 border-l border-slate-800 space-y-1 mt-0.5">
+                        {Object.entries(groupMap).map(([gTitle, data]) => {
+                          const subKey = `doc_sub_${catName}_${gTitle}`;
+                          const subOpen = isFolderOpen(subKey);
+                          const items = data.items;
+                          const isSingle = items.length === 1 && items[0].title === gTitle;
+
+                          // 単独ファイルの場合は階層を深くせず直接表示
+                          if (isSingle) {
+                            const item = items[0];
+                            const isDrawing = data.type === 'drawing';
+                            const isSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
+                            const rec = inspectionRecords[item.id];
+
+                            return (
+                              <button
+                                key={item.id}
+                                onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+                                className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
+                                  isSelected
+                                    ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
+                                    : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+                                }`}
+                              >
+                                <div className="mt-0.5 shrink-0">
+                                  {rec?.status === 'ok' ? (
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                  ) : rec?.status === 'issue' ? (
+                                    <AlertCircle className="w-3 h-3 text-rose-400" />
+                                  ) : isDrawing ? (
+                                    <FolderGit2 className="w-3 h-3 text-slate-500" />
+                                  ) : (
+                                    <FileText className="w-3 h-3 text-slate-500" />
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1 truncate text-xs">{item.title}</div>
+                              </button>
+                            );
+                          }
 
                           return (
-                            <button
-                              key={item.id}
-                              onClick={() => {
-                                if (isDrawing) {
-                                  onSelectDrawing(item.id);
-                                } else {
-                                  onSelectReport(item.id);
-                                }
-                              }}
-                              className={`w-full text-left p-1.5 rounded flex items-start gap-1.5 transition ${
-                                isSelected
-                                  ? 'bg-blue-600/20 text-blue-300 font-semibold border border-blue-500/40'
-                                  : 'text-slate-300 hover:bg-slate-900 hover:text-white'
-                              }`}
-                            >
-                              <div className="mt-0.5 shrink-0">
-                                {rec?.status === 'ok' ? (
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                ) : rec?.status === 'issue' ? (
-                                  <AlertCircle className="w-3 h-3 text-rose-400" />
-                                ) : isDrawing ? (
-                                  <FolderGit2 className="w-3 h-3 text-slate-500" />
-                                ) : (
-                                  <FileText className="w-3 h-3 text-slate-500" />
-                                )}
+                            <div key={gTitle}>
+                              <div
+                                onClick={() => toggleFolder(subKey)}
+                                className="flex items-center justify-between p-1 rounded hover:bg-slate-900/60 cursor-pointer text-slate-300 font-medium group transition"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  {subOpen ? (
+                                    <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                                  )}
+                                  {subOpen ? (
+                                    <FolderOpen className="w-3 h-3 text-blue-400 shrink-0" />
+                                  ) : (
+                                    <Folder className="w-3 h-3 text-slate-500 shrink-0" />
+                                  )}
+                                  <span className="text-[11px] truncate group-hover:text-slate-100">{gTitle}</span>
+                                </div>
+                                <span className="text-[9px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
+                                  {items.length}
+                                </span>
                               </div>
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-xs leading-tight">{item.title}</div>
-                                {'createDate' in item && item.createDate && (
-                                  <div className="text-[10px] text-slate-500 mt-0.5">{item.createDate}</div>
-                                )}
-                              </div>
-                            </button>
+
+                              {/* 第3階層: 鑑・本文・添付ファイルリスト */}
+                              {subOpen && (
+                                <div className="ml-3 pl-2 border-l border-slate-800/70 space-y-0.5 mt-0.5">
+                                  {items.map((item) => {
+                                    const isDrawing = data.type === 'drawing';
+                                    const isSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
+                                    const rec = inspectionRecords[item.id];
+                                    const role = ('fileRole' in item && item.fileRole) ? item.fileRole : '本紙';
+
+                                    return (
+                                      <button
+                                        key={item.id}
+                                        onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+                                        className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
+                                          isSelected
+                                            ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
+                                            : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                                        }`}
+                                      >
+                                        <div className="mt-0.5 shrink-0">
+                                          {rec?.status === 'ok' ? (
+                                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                          ) : rec?.status === 'issue' ? (
+                                            <AlertCircle className="w-3 h-3 text-rose-400" />
+                                          ) : (
+                                            <FileText className="w-3 h-3 text-slate-500" />
+                                          )}
+                                        </div>
+                                        <div className="min-w-0 flex-1 truncate text-[11px]">
+                                          <span className="font-semibold text-slate-300 mr-1">[{role}]</span>
+                                          <span>{item.fileName}</span>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -326,7 +464,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
             </div>
           )
         ) : (
-          /* ==================== 工事写真ツリー ==================== */
+          /* ==================== 工事写真ツリー (工種 > 区分 > 項目 > 写真) ==================== */
           Object.keys(filteredPhotoGroups).length === 0 ? (
             <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
           ) : (
@@ -334,11 +472,14 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
               {Object.entries(filteredPhotoGroups).map(([workType, cats]) => {
                 const wtKey = `photo_wt_${workType}`;
                 const wtOpen = isFolderOpen(wtKey);
-                const totalInWt = Object.values(cats).reduce((acc, l) => acc + l.length, 0);
+                const totalInWt = Object.values(cats).reduce(
+                  (acc, titles) => acc + Object.values(titles).reduce((a, l) => a + l.length, 0), 
+                  0
+                );
 
                 return (
                   <div key={workType} className="select-none">
-                    {/* 工種フォルダ */}
+                    {/* 第1階層: 工種 (砂防堰堤 等) */}
                     <div
                       onClick={() => toggleFolder(wtKey)}
                       className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
@@ -357,18 +498,19 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
                       </span>
                     </div>
 
-                    {/* 写真区分サブ階層 */}
+                    {/* 第2階層: 写真区分 (施工状況写真, 着手前及び完成写真 等) */}
                     {wtOpen && (
                       <div className="ml-3 pl-2 border-l border-slate-800 space-y-1 mt-0.5">
-                        {Object.entries(cats).map(([category, photoList]) => {
+                        {Object.entries(cats).map(([category, titles]) => {
                           const catKey = `photo_cat_${workType}_${category}`;
                           const catOpen = isFolderOpen(catKey);
+                          const totalInCat = Object.values(titles).reduce((a, l) => a + l.length, 0);
 
                           return (
                             <div key={category}>
                               <div
                                 onClick={() => toggleFolder(catKey)}
-                                className="flex items-center justify-between p-1 rounded hover:bg-slate-900/60 cursor-pointer text-slate-400 font-medium group transition"
+                                className="flex items-center justify-between p-1 rounded hover:bg-slate-900/60 cursor-pointer text-slate-300 font-medium group transition"
                               >
                                 <div className="flex items-center gap-1.5 truncate">
                                   {catOpen ? (
@@ -376,46 +518,82 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
                                   ) : (
                                     <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
                                   )}
-                                  <span className="text-[11px] truncate group-hover:text-slate-200">{category}</span>
+                                  <span className="text-[11px] truncate group-hover:text-slate-100">{category}</span>
                                 </div>
                                 <span className="text-[9px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
-                                  {photoList.length}
+                                  {totalInCat}
                                 </span>
                               </div>
 
-                              {/* 写真アイテム */}
+                              {/* 第3階層: 項目/写真タイトル (ICT掘削状況, 床掘完了 等) */}
                               {catOpen && (
                                 <div className="ml-3 pl-2 border-l border-slate-800/60 space-y-0.5 mt-0.5">
-                                  {photoList.map((photo) => {
-                                    const isSelected = photo.id === selectedPhotoId;
-                                    const rec = inspectionRecords[photo.id];
+                                  {Object.entries(titles).map(([titleName, photoList]) => {
+                                    const titleKey = `photo_title_${workType}_${category}_${titleName}`;
+                                    const titleOpen = isFolderOpen(titleKey);
 
                                     return (
-                                      <button
-                                        key={photo.id}
-                                        onClick={() => onSelectPhoto(photo.id)}
-                                        className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
-                                          isSelected
-                                            ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
-                                            : 'text-slate-300 hover:bg-slate-900 hover:text-white'
-                                        }`}
-                                      >
-                                        <div className="mt-0.5 shrink-0">
-                                          {rec?.status === 'ok' ? (
-                                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                          ) : rec?.status === 'issue' ? (
-                                            <AlertCircle className="w-3 h-3 text-rose-400" />
-                                          ) : (
-                                            <ImageIcon className="w-3 h-3 text-slate-500" />
-                                          )}
+                                      <div key={titleName}>
+                                        <div
+                                          onClick={() => toggleFolder(titleKey)}
+                                          className="flex items-center justify-between p-1 rounded hover:bg-slate-900/80 cursor-pointer text-slate-400 group transition"
+                                        >
+                                          <div className="flex items-center gap-1 truncate">
+                                            {titleOpen ? (
+                                              <ChevronDown className="w-2.5 h-2.5 text-slate-500 shrink-0" />
+                                            ) : (
+                                              <ChevronRight className="w-2.5 h-2.5 text-slate-500 shrink-0" />
+                                            )}
+                                            <Tag className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                                            <span className="text-[10px] font-medium truncate group-hover:text-slate-200">
+                                              {titleName}
+                                            </span>
+                                          </div>
+                                          <span className="text-[9px] text-slate-500 bg-slate-900 px-1 py-0.2 rounded shrink-0">
+                                            {photoList.length}
+                                          </span>
                                         </div>
-                                        <div className="min-w-0 flex-1">
-                                          <div className="truncate text-[11px] leading-tight">{photo.title}</div>
-                                          {photo.station && (
-                                            <div className="text-[9px] text-slate-500 mt-0.5">{photo.station}</div>
-                                          )}
-                                        </div>
-                                      </button>
+
+                                        {/* 第4階層: 写真アイテム (測点・ファイル名) */}
+                                        {titleOpen && (
+                                          <div className="ml-3 pl-2 border-l border-slate-800/40 space-y-0.5 mt-0.5">
+                                            {photoList.map((photo) => {
+                                              const isSelected = photo.id === selectedPhotoId;
+                                              const rec = inspectionRecords[photo.id];
+
+                                              return (
+                                                <button
+                                                  key={photo.id}
+                                                  onClick={() => onSelectPhoto(photo.id)}
+                                                  className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
+                                                    isSelected
+                                                      ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
+                                                      : 'text-slate-400 hover:bg-slate-900 hover:text-white'
+                                                  }`}
+                                                >
+                                                  <div className="mt-0.5 shrink-0">
+                                                    {rec?.status === 'ok' ? (
+                                                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                                    ) : rec?.status === 'issue' ? (
+                                                      <AlertCircle className="w-3 h-3 text-rose-400" />
+                                                    ) : (
+                                                      <ImageIcon className="w-3 h-3 text-slate-500" />
+                                                    )}
+                                                  </div>
+                                                  <div className="min-w-0 flex-1">
+                                                    <div className="truncate text-[10px] leading-tight text-slate-300">
+                                                      {photo.station || photo.fileName}
+                                                    </div>
+                                                    {photo.date && (
+                                                      <div className="text-[9px] text-slate-500">{photo.date}</div>
+                                                    )}
+                                                  </div>
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
                                     );
                                   })}
                                 </div>
