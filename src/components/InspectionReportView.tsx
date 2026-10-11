@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { 
   X, 
   Download, 
@@ -39,9 +39,12 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
   onImportBackup,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [filterMode, setFilterMode] = useState<'all' | 'issue-only'>('all');
+
   const records = Object.values(inspectionRecords);
   const okRecords = records.filter(r => r.status === 'ok');
   const issueRecords = records.filter(r => r.status === 'issue');
+  const displayedRecords = filterMode === 'issue-only' ? issueRecords : records;
   const uninspectedCount = totalItemsCount > records.length ? totalItemsCount - records.length : 0;
 
   // 書類・図面・写真の詳細メタデータを解決（保存済み値 優先、未保存時はIDから逆引き）
@@ -121,11 +124,11 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
     e.target.value = '';
   };
 
-  // CSVダウンロード処理 (UTF-8 BOM付き) - ファイル名や大分類を網羅
+  // CSVダウンロード処理 (UTF-8 BOM付き) - 選択された表示モード（全件 or 指摘のみ）に連動
   const handleExportCsv = () => {
     const photoLabel = constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真';
     const headers = ['区分', '大分類・帳票名', '対象項目', 'ファイル名', '役割・細別', '測点・作成日', '判定', '指摘事項・確認メモ', '確認日時'];
-    const rows = records.map(r => {
+    const rows = displayedRecords.map(r => {
       const meta = resolveMeta(r);
       return [
         r.targetType === 'photo' ? photoLabel : r.targetType === 'report' ? '報告書類' : '完成図面',
@@ -145,7 +148,8 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `検査指摘調書_${constructionInfo.constructionName}_${new Date().toISOString().slice(0, 10)}.csv`;
+    const prefix = filterMode === 'issue-only' ? '検査指摘調書(指摘のみ)' : '検査点検調書(全件)';
+    link.download = `${prefix}_${constructionInfo.constructionName}_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -298,12 +302,52 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
 
           {/* 全記録テーブル */}
           <div className="pt-2">
-            <h3 className="text-xs sm:text-sm font-bold text-slate-200 mb-2 print:text-black">
-              全項目 検査点検一覧 ({records.length} 件)
-            </h3>
-            {records.length === 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs sm:text-sm font-bold text-slate-200 print:text-black flex items-center gap-1.5">
+                  <span>検査点検一覧</span>
+                  <span className="text-xs font-normal text-slate-400 print:text-gray-600">
+                    ({displayedRecords.length} 件)
+                  </span>
+                  <span className="hidden print:inline text-xs font-semibold text-gray-800 ml-2">
+                    {filterMode === 'issue-only' ? '【要確認・指摘事項のみ】' : '【全項目点検記録】'}
+                  </span>
+                </h3>
+              </div>
+
+              {/* 出力対象選択トグル (確認済みを含むか含まないか) */}
+              <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs print:hidden shadow-inner">
+                <button
+                  onClick={() => setFilterMode('all')}
+                  className={`px-3 py-1 rounded-md font-semibold transition ${
+                    filterMode === 'all'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="確認済（適）と指摘事項の両方を一覧・出力"
+                >
+                  すべて出力 ({records.length})
+                </button>
+                <button
+                  onClick={() => setFilterMode('issue-only')}
+                  className={`px-3 py-1 rounded-md font-semibold transition flex items-center gap-1.5 ${
+                    filterMode === 'issue-only'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-rose-300'
+                  }`}
+                  title="確認済を除外し、指摘・要確認事項のみを一覧・出力"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>指摘のみ出力 ({issueRecords.length})</span>
+                </button>
+              </div>
+            </div>
+
+            {displayedRecords.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
-                点検記録がまだありません。写真や書類で「確認済」または「要確認」ボタンを押すとここに反映されます。
+                {filterMode === 'issue-only'
+                  ? '指摘・要確認事項はありません（すべて「適」または未確認です）。'
+                  : '点検記録がまだありません。写真や書類で「確認済」または「要確認」ボタンを押すとここに反映されます。'}
               </div>
             ) : (
               <div className="border border-slate-800 rounded-xl overflow-hidden print:border-gray-400 print:rounded-none">
@@ -320,7 +364,7 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 print:divide-gray-300">
-                    {records.map((r) => {
+                    {displayedRecords.map((r) => {
                       const meta = resolveMeta(r);
                       return (
                         <tr key={r.targetId} className="hover:bg-slate-800/30 print:break-inside-avoid print-avoid-break">
