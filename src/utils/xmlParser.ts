@@ -48,7 +48,7 @@ export function decodeXmlBuffer(buffer: ArrayBuffer): string {
 }
 
 /**
- * 日付文字列（YYYYMMDD, YYYY/MM/DD等）を標準的な YYYY-MM-DD に正規化
+ * 日付文字列（YYYYMMDD, YYYY/MM/DD, YYYY-MM-DD 等）を標準的な YYYY-MM-DD に正規化
  */
 export function normalizeCalsDate(rawDate?: string): string {
   if (!rawDate) return '';
@@ -157,7 +157,7 @@ export function parseXmlString(xmlString: string): Document {
   sanitized = sanitized.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
 
   const parser = new DOMParser();
-  let doc = parser.parseFromString(sanitized, 'text/xml');
+  const doc = parser.parseFromString(sanitized, 'text/xml');
 
   // パースエラーチェック
   const parseError = doc.querySelector('parsererror');
@@ -176,57 +176,80 @@ export function parseXmlString(xmlString: string): Document {
 
 /**
  * INDEX_C.XML または INDEX_D.XML のパース
- * 国土交通省・広島県電子納品基準の階層構造（contract, client, contractor, term 等）に対応
+ * 国土交通省・広島県電子納品基準の日本語タグ（INDE_C06.DTD等）および英語タグの両方に対応
  */
 export function parseIndexXml(xmlString: string): ConstructionInfo {
   const doc = parseXmlString(xmlString);
   const root = doc.documentElement;
 
-  // 工事名称 / 業務名称
+  // 1. 工事名称 / 業務名称
   const constructionName = 
-    getElementText(root, 'construction_name', 'business_name', 'work_name', 'project_name', 'title') || 
+    getElementText(root, '工事名称', '工事名', '工事件名', 'construction_name', 'business_name', 'work_name', 'project_name', 'title') || 
     '（名称未設定工事）';
 
-  // 路線・河川名
+  // 2. 路線・河川名
   const lineRiverName = 
-    getElementText(root, 'line_river_name', 'route_name', 'river_name');
+    getElementText(root, '水系-路線情報', '路線河川名', '路線名', '河川名', 'line_river_name', 'route_name', 'river_name');
 
-  // 発注者名称 (client 配下、または orderer_name)
-  let clientName = getElementText(root, 'client_name', 'orderer_name', 'client');
-  const departmentName = getElementText(root, 'department_name', 'office_name');
-  if (departmentName && clientName && !clientName.includes(departmentName)) {
-    clientName = `${clientName} ${departmentName}`;
+  // 3. 発注者名称 (<発注者情報> 配下の <発注者-大分類> + <発注者-中分類> を自動結合)
+  let clientName = '';
+  const clientInfoNodes = findDescendantElements(root, '発注者情報', 'client');
+  if (clientInfoNodes.length > 0) {
+    const cNode = clientInfoNodes[0];
+    const big = getElementText(cNode, '発注者-大分類', 'client_major');
+    const mid = getElementText(cNode, '発注者-中分類', 'client_middle');
+    if (big && mid) {
+      clientName = `${big} ${mid}`;
+    } else if (big || mid) {
+      clientName = big || mid;
+    }
+  }
+  if (!clientName) {
+    clientName = getElementText(root, '発注者名', '発注者', '発注者-大分類', 'client_name', 'orderer_name', 'client');
   }
   if (!clientName) clientName = '広島県';
 
-  // 請負者・受注者名称 (contractor 配下、または company_name)
-  const contractorName = 
-    getElementText(root, 'contractor_name', 'company_name', 'contractor', 'consignment_name') || 
-    '（施工業者未設定）';
+  // 4. 請負者・受注者名称 (<受注者情報> 配下の <受注者名>)
+  let contractorName = '';
+  const contractorInfoNodes = findDescendantElements(root, '受注者情報', 'contractor');
+  if (contractorInfoNodes.length > 0) {
+    const coNode = contractorInfoNodes[0];
+    contractorName = getElementText(coNode, '受注者名', 'contractor_name');
+  }
+  if (!contractorName) {
+    contractorName = getElementText(root, '受注者名', '請負者名', '請負者', '受注者', 'contractor_name', 'company_name', 'contractor', 'consignment_name') || 
+      '（施工業者未設定）';
+  }
 
-  // 契約番号
+  // 5. 契約番号 / 工事番号
   const contractNumber = 
-    getElementText(root, 'contract_number', 'contract_no');
+    getElementText(root, '工事番号', '契約番号', 'contract_number', 'contract_no');
 
-  // 工期 (start_date / end_date)
+  // 6. 工期 (start_date / end_date)
   const startDate = normalizeCalsDate(
-    getElementText(root, 'start_date', 'term_start', 'term_from', 'work_start_date')
+    getElementText(root, '工期開始日', 'start_date', 'term_start', 'term_from', 'work_start_date')
   );
   const endDate = normalizeCalsDate(
-    getElementText(root, 'end_date', 'term_end', 'term_to', 'work_end_date')
+    getElementText(root, '工期終了日', 'end_date', 'term_end', 'term_to', 'work_end_date')
   );
 
-  // 工事場所
-  const place = 
-    getElementText(root, 'place_description', 'location', 'place', 'address', 'site_address');
+  // 7. 工事場所 (<住所情報> 配下の <住所>)
+  let place = '';
+  const addressNodes = findDescendantElements(root, '住所情報');
+  if (addressNodes.length > 0) {
+    place = getElementText(addressNodes[0], '住所');
+  }
+  if (!place) {
+    place = getElementText(root, '住所', '工事場所', '施工場所', 'place_description', 'location', 'place', 'address', 'site_address');
+  }
 
-  // 監督員・検査員
+  // 8. 監督員・検査員
   const supervisor = 
-    getElementText(root, 'supervisor', 'inspector', 'supervising_engineer');
+    getElementText(root, '監督員', '監督員名', '検査員', 'supervisor', 'inspector', 'supervising_engineer');
 
-  // 主任技術者・監理技術者・現場代理人
+  // 9. 主任技術者・監理技術者・現場代理人
   const chiefEngineer = 
-    getElementText(root, 'chief_engineer', 'managing_engineer', 'site_representative', 'engineer');
+    getElementText(root, '主任技術者名', '監理技術者名', '現場代理人', 'chief_engineer', 'managing_engineer', 'site_representative', 'engineer');
 
   return {
     constructionName,
@@ -244,35 +267,44 @@ export function parseIndexXml(xmlString: string): ConstructionInfo {
 
 /**
  * PHOTO_C.XML / PHOTO.XML のパース
- * 国土交通省「デジタル写真管理情報基準」準拠
- * タグ: <photo>, <kou_syu>, <syu_betu>, <sai_betu>, <photo_place>, <photo_file_name> 等を完全網羅
- * 電子黒板情報（設計値・実測値・測定項目等）の抽出対応
+ * 国土交通省「デジタル写真管理情報基準（PHOTO05.DTD等）」の日本語タグおよび英語タグに完全対応
  */
 export function parsePhotoXml(xmlString: string): PhotoItem[] {
   const doc = parseXmlString(xmlString);
   const items: PhotoItem[] = [];
 
-  // 各写真要素を大文字小文字・プレフィックス無視で探索 (<photo>, <photo_item>, <picture>, <pic>)
-  const photoNodes = findDescendantElements(doc, 'photo', 'photo_item', 'picture', 'pic');
+  // 各写真要素の探索 (<写真情報>, <photo>, <photo_item>, <picture>, <pic>)
+  const photoNodes = findDescendantElements(doc, '写真情報', 'photo', 'photo_item', 'picture', 'pic');
 
   photoNodes.forEach((node, index) => {
-    // 1. ファイル名（国交省標準: photo_file_name）
-    const fileName = getElementText(
-      node, 
-      'photo_file_name', 
-      'photo_filename', 
-      'file_name', 
-      'filename', 
-      'pic_file_name', 
-      'file'
-    );
+    // 1. 写真ファイル名 (<写真ファイル情報> 内の <写真ファイル名> または直接)
+    let fileName = '';
+    const fileInfoNodes = findDescendantElements(node, '写真ファイル情報');
+    if (fileInfoNodes.length > 0) {
+      fileName = getElementText(fileInfoNodes[0], '写真ファイル名', 'photo_file_name', 'file_name');
+    }
+    if (!fileName) {
+      fileName = getElementText(
+        node, 
+        '写真ファイル名', 
+        'photo_file_name', 
+        'photo_filename', 
+        'file_name', 
+        'filename', 
+        'pic_file_name', 
+        'file'
+      );
+    }
 
     // 2. 写真ID
-    const id = getElementText(node, 'photo_id', 'id') || `PHOTO_${index + 1}`;
+    const serial = getElementText(node, 'シリアル番号', 'serial_number', 'photo_id', 'id');
+    const id = serial ? `PHOTO_${serial}` : `PHOTO_${index + 1}`;
 
-    // 3. タイトル
+    // 3. タイトル (<写真タイトル> / <タイトル>)
     const title = getElementText(
       node, 
+      '写真タイトル', 
+      'タイトル', 
       'photo_title', 
       'title', 
       'caption', 
@@ -280,47 +312,55 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       'name'
     ) || (fileName ? fileName.replace(/\.[^.]+$/, '') : `写真 ${index + 1}`);
 
-    // 4. 写真区分 (着工前 / 施工中 / 完成 / 不可視部分 等)
+    // 4. 写真区分 (着手前及び完成写真 / 施工状況写真 / 出来形管理写真 / 安全管理写真 等)
     const category = getElementText(
       node, 
+      '写真区分', 
+      '写真-大分類', 
       'photo_category', 
       'category', 
       'photo_kbn', 
       'kbn'
-    ) || '施工中';
+    ) || '施工状況写真';
 
-    // 5. 写真種別 (出来形管理 / 品質管理 / 安全管理 / 使用材料 等)
+    // 5. 写真種別
     const type = getElementText(
       node, 
+      '写真種別', 
+      '写真-大分類', 
       'photo_class', 
       'photo_type', 
       'class', 
       'type', 
       'syubetsu'
-    ) || '出来形管理';
+    ) || '工事写真';
 
-    // 6. 工種（国交省標準: kou_syu）
+    // 6. 工種 (国交省標準: <工種> / <kou_syu>)
     const workType = getElementText(
       node, 
+      '工種', 
       'kou_syu', 
       'kousyu', 
       'work_type', 
       'worktype', 
       'work_category'
-    ) || type || '一般工種';
+    ) || category || '一般工種';
 
-    // 7. 種別（国交省標準: syu_betu）
+    // 7. 種別 (国交省標準: <種別> / <syu_betu>)
     const workKind = getElementText(
       node, 
+      '種別', 
       'syu_betu', 
       'syubetu', 
       'work_kind', 
       'workkind'
     ) || '';
 
-    // 8. 細別（国交省標準: sai_betu）
+    // 8. 細別 (国交省標準: <細別> / <sai_betu>)
     const workDetail = getElementText(
       node, 
+      '細別', 
+      '細別2', 
       'sai_betu', 
       'saibetu', 
       'work_detail', 
@@ -328,14 +368,16 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
     ) || '';
 
     // 9. 撮影日・時刻
-    const rawDate = getElementText(node, 'photo_date', 'date', 'shooting_date', 'shot_date');
+    const rawDate = getElementText(node, '撮影年月日', '撮影日', 'photo_date', 'date', 'shooting_date', 'shot_date');
     const date = normalizeCalsDate(rawDate);
-    const rawTime = getElementText(node, 'photo_time', 'time', 'shooting_time');
+    const rawTime = getElementText(node, '撮影時刻', '撮影時間', 'photo_time', 'time', 'shooting_time');
     const time = normalizeCalsTime(rawTime);
 
-    // 10. 測点・撮影箇所（国交省標準: photo_place）
+    // 10. 測点・撮影箇所 (国交省標準: <撮影箇所> / <測点> / <photo_place>)
     const station = getElementText(
       node, 
+      '撮影箇所', 
+      '測点', 
       'photo_place', 
       'station', 
       'measure_point', 
@@ -344,9 +386,13 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       'location'
     ) || '';
 
-    // 11. 備考
+    // 11. 備考・施工管理値・予備
     const remarks = getElementText(
       node, 
+      '工種区分予備', 
+      '施工管理値', 
+      '備考', 
+      '説明文', 
       'remarks', 
       'memo', 
       'description', 
@@ -356,40 +402,33 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
     // 12. 電子黒板情報（小黒板メタデータ、設計値、実測値等の網羅的抽出）
     const blackboardItems: BlackboardItem[] = [];
 
-    // 測点
-    if (station) {
-      blackboardItems.push({ name: '測点', value: station });
-    }
+    if (workType) blackboardItems.push({ name: '工種', value: workType });
+    if (workKind) blackboardItems.push({ name: '種別', value: workKind });
+    if (workDetail) blackboardItems.push({ name: '細別', value: workDetail });
+    if (station) blackboardItems.push({ name: '測点', value: station });
+    if (title && title !== fileName) blackboardItems.push({ name: '項目', value: title });
+    if (remarks) blackboardItems.push({ name: '備考', value: remarks });
 
     // 設計値・実測値・許容差・測定項目の抽出
-    const measureItem = getElementText(node, 'measure_item', 'measurement_item', 'koumoku');
-    if (measureItem) {
+    const measureItem = getElementText(node, '測定項目', 'measure_item', 'measurement_item', 'koumoku');
+    if (measureItem && !blackboardItems.some(i => i.name === '測定項目')) {
       blackboardItems.push({ name: '測定項目', value: measureItem });
     }
 
-    const designVal = getElementText(node, 'design_value', 'plan_val', 'plan_value', 'sekkei_ti');
-    if (designVal) {
+    const designVal = getElementText(node, '設計値', 'design_value', 'plan_val', 'plan_value', 'sekkei_ti');
+    if (designVal && !blackboardItems.some(i => i.name === '設計値')) {
       blackboardItems.push({ name: '設計値', value: designVal });
     }
 
-    const measuredVal = getElementText(node, 'measured_value', 'actual_val', 'actual_value', 'jissoku_ti');
-    if (measuredVal) {
+    const measuredVal = getElementText(node, '実測値', 'measured_value', 'actual_val', 'actual_value', 'jissoku_ti');
+    if (measuredVal && !blackboardItems.some(i => i.name === '実測値')) {
       blackboardItems.push({ name: '実測値', value: measuredVal });
     }
 
-    const tolerance = getElementText(node, 'tolerance', 'kyoyousa');
-    if (tolerance) {
-      blackboardItems.push({ name: '許容差', value: tolerance });
-    }
-
-    const diff = getElementText(node, 'difference', 'diff_value', 'sa');
-    if (diff) {
-      blackboardItems.push({ name: '差', value: diff });
-    }
-
-    // 子要素内の小黒板ノード（<blackboard>, <kokuban>, <blackboard_item>, <item> 等）の走査
+    // 子要素内の小黒板ノードの走査
     const bbItemNodes = findDescendantElements(
       node, 
+      '黒板情報', 
       'blackboard_item', 
       'item', 
       'item_info', 
@@ -397,10 +436,9 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
     );
 
     bbItemNodes.forEach(bb => {
-      const n = getElementText(bb, 'name', 'item_name', 'koumoku', 'title');
-      const v = getElementText(bb, 'value', 'item_value', 'val', 'content');
+      const n = getElementText(bb, '項目名', 'name', 'item_name', 'koumoku', 'title');
+      const v = getElementText(bb, '値', 'value', 'item_value', 'val', 'content');
       if (n && v) {
-        // 重複チェック
         if (!blackboardItems.some(item => item.name === n)) {
           blackboardItems.push({ name: n, value: v });
         }
@@ -431,97 +469,195 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
 }
 
 /**
- * REPORT_C.XML / REPORT.XML / MEET_C.XML / PLAN_C.XML 等のパース
- * 報告書・協議簿・施工計画書に対応
+ * REPORT_C.XML / MEET.XML / PLAN.XML / OTHRS.XML 等のパース
+ * 国交省・広島県の各種電子成果品要領（MEET05.DTD, PLAN05.DTD, OTHRS05.DTD等）に完全対応
  */
 export function parseReportXml(xmlString: string): ReportItem[] {
   const doc = parseXmlString(xmlString);
   const items: ReportItem[] = [];
 
-  // 報告書・協議書・計画書ノードの探索
-  const reportNodes = findDescendantElements(
-    doc, 
-    'report', 
-    'report_item', 
-    'meet', 
-    'meet_item', 
-    'plan', 
-    'plan_item'
-  );
+  // 1. 打合せ簿情報 (<打合せ簿情報>) のパース (MEET.XML)
+  const meetNodes = findDescendantElements(doc, '打合せ簿情報', 'meet_item', 'meet');
+  meetNodes.forEach((node, mIndex) => {
+    const serial = getElementText(node, 'シリアル番号', 'serial_number');
+    const meetName = getElementText(node, '打合せ簿名称', '名称', 'name', 'title') || `打合せ簿 ${mIndex + 1}`;
+    const meetClass = getElementText(node, '工事帳票種類', '打合せ簿種類', '帳票種類', 'type') || '打合せ簿';
+    const rawDate = getElementText(node, '発行日付', '受理日付', '作成日', 'date');
+    const date = normalizeCalsDate(rawDate);
 
-  reportNodes.forEach((node, index) => {
-    const id = getElementText(node, 'report_id', 'meet_id', 'plan_id', 'id') || `REP_${index + 1}`;
-    const fileName = getElementText(
-      node, 
-      'report_file_name', 
-      'meet_file_name', 
-      'plan_file_name', 
-      'file_name', 
-      'filename', 
-      'file'
-    ) || '';
+    // <オリジナルファイル情報> が複数ある場合がある
+    const fileInfos = findDescendantElements(node, 'オリジナルファイル情報');
+    if (fileInfos.length > 0) {
+      fileInfos.forEach((fNode, fIdx) => {
+        const fileName = getElementText(fNode, '打合せ簿オリジナルファイル名', 'オリジナルファイル名', 'file_name', 'filename');
+        const fileJpName = getElementText(fNode, '打合せ簿オリジナルファイル日本語名', 'オリジナルファイル日本語名');
+        const fileContent = getElementText(fNode, 'オリジナルファイル内容', '内容');
 
-    const title = getElementText(
-      node, 
-      'report_title', 
-      'meet_title', 
-      'plan_title', 
-      'title', 
-      'name', 
-      'subject'
-    ) || (fileName ? fileName.replace(/\.[^.]+$/, '') : `書類 ${index + 1}`);
-
-    const type = getElementText(
-      node, 
-      'report_type', 
-      'meet_type', 
-      'plan_type', 
-      'type', 
-      'report_class', 
-      'class'
-    ) || '報告書類';
-
-    const rawDate = getElementText(node, 'create_date', 'date', 'report_date', 'meet_date');
-    const createDate = normalizeCalsDate(rawDate);
-
-    const summary = getElementText(
-      node, 
-      'summary', 
-      'remarks', 
-      'description', 
-      'memo'
-    ) || '';
-
-    if (fileName || title) {
-      items.push({
-        id,
-        title,
-        type,
-        fileName,
-        filePath: fileName,
-        createDate,
-        summary,
+        if (fileName) {
+          const detailSuffix = fileContent ? ` (${fileContent})` : fileJpName ? ` (${fileJpName})` : '';
+          items.push({
+            id: `MEET_${serial || mIndex + 1}_${fIdx + 1}`,
+            title: `${meetName}${detailSuffix}`,
+            type: meetClass,
+            fileName,
+            filePath: fileName,
+            createDate: date,
+            summary: `${meetClass} / ${meetName} ${detailSuffix}`,
+          });
+        }
       });
+    } else {
+      const fileName = getElementText(node, '打合せ簿オリジナルファイル名', 'オリジナルファイル名', 'file_name', 'filename');
+      if (fileName) {
+        items.push({
+          id: `MEET_${serial || mIndex + 1}`,
+          title: meetName,
+          type: meetClass,
+          fileName,
+          filePath: fileName,
+          createDate: date,
+          summary: `${meetClass} / ${meetName}`,
+        });
+      }
     }
   });
+
+  // 2. 施工計画書情報 (<施工計画書情報>) のパース (PLAN.XML)
+  const planNodes = findDescendantElements(doc, '施工計画書情報', 'plan_item', 'plan');
+  planNodes.forEach((node, pIndex) => {
+    const serial = getElementText(node, 'シリアル番号', 'serial_number');
+    const planName = getElementText(node, '施工計画書名称', '名称', 'name', 'title') || `施工計画書 ${pIndex + 1}`;
+    const rawDate = getElementText(node, '提出日付', '作成日', 'date');
+    const date = normalizeCalsDate(rawDate);
+
+    const fileInfos = findDescendantElements(node, 'オリジナルファイル情報');
+    if (fileInfos.length > 0) {
+      fileInfos.forEach((fNode, fIdx) => {
+        const fileName = getElementText(fNode, '施工計画書オリジナルファイル名', 'オリジナルファイル名', 'file_name', 'filename');
+        const fileContent = getElementText(fNode, 'オリジナルファイル内容', '内容');
+        const fileJpName = getElementText(fNode, '施工計画書オリジナルファイル日本語名', 'オリジナルファイル日本語名');
+
+        if (fileName) {
+          const detailSuffix = fileContent ? ` (${fileContent})` : fileJpName ? ` (${fileJpName})` : '';
+          items.push({
+            id: `PLAN_${serial || pIndex + 1}_${fIdx + 1}`,
+            title: `${planName}${detailSuffix}`,
+            type: '施工計画書',
+            fileName,
+            filePath: fileName,
+            createDate: date,
+            summary: `施工計画書: ${planName} ${detailSuffix}`,
+          });
+        }
+      });
+    } else {
+      const fileName = getElementText(node, '施工計画書オリジナルファイル名', 'オリジナルファイル名', 'file_name');
+      if (fileName) {
+        items.push({
+          id: `PLAN_${serial || pIndex + 1}`,
+          title: planName,
+          type: '施工計画書',
+          fileName,
+          filePath: fileName,
+          createDate: date,
+          summary: `施工計画書: ${planName}`,
+        });
+      }
+    }
+  });
+
+  // 3. その他資料情報 (<その他資料情報>) のパース (OTHRS.XML)
+  const othrsNodes = findDescendantElements(doc, 'その他資料情報', 'othrs_item');
+  othrsNodes.forEach((node, oIndex) => {
+    const docName = getElementText(node, '資料名', '名称', 'title', 'name') || `その他書類 ${oIndex + 1}`;
+    const rawDate = getElementText(node, '作成日付', '作成日', 'date');
+    const date = normalizeCalsDate(rawDate);
+
+    const fileInfos = findDescendantElements(node, 'オリジナルファイル情報');
+    if (fileInfos.length > 0) {
+      fileInfos.forEach((fNode, fIdx) => {
+        const fileName = getElementText(fNode, 'オリジナルファイル名', 'file_name', 'filename');
+        const fileContent = getElementText(fNode, 'オリジナルファイル内容', '内容');
+
+        if (fileName) {
+          const detailSuffix = fileContent ? ` (${fileContent})` : '';
+          items.push({
+            id: `OTHRS_${oIndex + 1}_${fIdx + 1}`,
+            title: `${docName}${detailSuffix}`,
+            type: '契約・その他書類',
+            fileName,
+            filePath: fileName,
+            createDate: date,
+            summary: `その他資料: ${docName} ${detailSuffix}`,
+          });
+        }
+      });
+    } else {
+      const fileName = getElementText(node, 'オリジナルファイル名', 'file_name');
+      if (fileName) {
+        items.push({
+          id: `OTHRS_${oIndex + 1}`,
+          title: docName,
+          type: '契約・その他書類',
+          fileName,
+          filePath: fileName,
+          createDate: date,
+          summary: `その他資料: ${docName}`,
+        });
+      }
+    }
+  });
+
+  // 4. 汎用フォールバック (英字タグ: <report_item>, <report>)
+  if (items.length === 0) {
+    const reportNodes = findDescendantElements(doc, 'report', 'report_item');
+    reportNodes.forEach((node, index) => {
+      const id = getElementText(node, 'report_id', 'id') || `REP_${index + 1}`;
+      const fileName = getElementText(node, 'report_file_name', 'file_name', 'filename', 'file') || '';
+      const title = getElementText(node, 'report_title', 'title', 'name', 'subject') || 
+        (fileName ? fileName.replace(/\.[^.]+$/, '') : `書類 ${index + 1}`);
+      const type = getElementText(node, 'report_type', 'type', 'report_class', 'class') || '報告書類';
+      const rawDate = getElementText(node, 'create_date', 'date', 'report_date');
+      const createDate = normalizeCalsDate(rawDate);
+      const summary = getElementText(node, 'summary', 'remarks', 'description') || '';
+
+      if (fileName || title) {
+        items.push({
+          id,
+          title,
+          type,
+          fileName,
+          filePath: fileName,
+          createDate,
+          summary,
+        });
+      }
+    });
+  }
 
   return items;
 }
 
 /**
- * DRAWING_C.XML / DRAWING.XML / DRAWINGF.XML / DRAWINGS.XML のパース
- * 国土交通省完成図面（DRAWINGF）および施工図（DRAWINGS）に対応
+ * DRAWINGF.XML / DRAWINGS.XML / DRAWING_C.XML / DRAWING.XML のパース
+ * 国土交通省「CAD製図基準（DRAW04.DTD等）」の日本語タグおよび英語タグに完全対応
  */
 export function parseDrawingXml(xmlString: string): DrawingItem[] {
   const doc = parseXmlString(xmlString);
   const items: DrawingItem[] = [];
 
-  const drawingNodes = findDescendantElements(doc, 'drawing', 'drawing_item', 'draw');
+  // 各図面要素の探索 (<図面情報>, <drawing>, <drawing_item>, <draw>)
+  const drawingNodes = findDescendantElements(doc, '図面情報', 'drawing', 'drawing_item', 'draw');
 
   drawingNodes.forEach((node, index) => {
-    const id = getElementText(node, 'drawing_id', 'id') || `DRW_${index + 1}`;
+    // 1. 図面番号 / ID
+    const drawingNum = getElementText(node, '図面番号', 'drawing_id', 'id');
+    const id = drawingNum ? `DRW_${drawingNum}` : `DRW_${index + 1}`;
+
+    // 2. 図面ファイル名 (P21, SFC, PDF 等)
     const fileName = getElementText(
       node, 
+      '図面ファイル名', 
       'drawing_file_name', 
       'file_name', 
       'filename', 
@@ -529,6 +665,7 @@ export function parseDrawingXml(xmlString: string): DrawingItem[] {
       'pdf_file'
     ) || '';
 
+    // 3. CADファイル名
     const cadFileName = getElementText(
       node, 
       'cad_file_name', 
@@ -536,25 +673,30 @@ export function parseDrawingXml(xmlString: string): DrawingItem[] {
       'sxf_file', 
       'sxf_file_name', 
       'cad_file'
-    ) || '';
+    ) || (/\.(p21|sfc)$/i.test(fileName) ? fileName : '');
 
+    // 4. 図面名 / タイトル
     const title = getElementText(
       node, 
+      '図面名', 
       'drawing_title', 
       'title', 
       'name', 
       'drawing_name'
     ) || (fileName ? fileName.replace(/\.[^.]+$/, '') : `図面 ${index + 1}`);
 
+    // 5. 図面種別
     const type = getElementText(
       node, 
+      '図面種別', 
       'drawing_type', 
       'type', 
       'drawing_class', 
       'class'
     ) || '完成図';
 
-    const scale = getElementText(node, 'scale', 'drawing_scale') || '';
+    // 6. 縮尺
+    const scale = getElementText(node, '縮尺', 'scale', 'drawing_scale') || '';
 
     if (fileName || cadFileName || title) {
       items.push({

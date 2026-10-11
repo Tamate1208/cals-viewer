@@ -7,7 +7,9 @@ import {
   Info, 
   ExternalLink, 
   Search, 
-  FileSpreadsheet
+  FileSpreadsheet,
+  Download,
+  Compass
 } from 'lucide-react';
 import type { ConstructionInfo, DrawingItem, InspectionRecord, ReportItem } from '../types/cals';
 
@@ -339,21 +341,75 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                   )}
                 </div>
 
-                {/* PDF/HTML インラインプレビュー本体 */}
+                {/* PDF/CAD/インラインプレビュー本体 */}
                 <div className="flex-1 bg-slate-950 relative overflow-hidden flex items-center justify-center">
-                  {currentItem.fileUrl ? (
-                    <iframe
-                      src={currentItem.fileUrl}
-                      title={currentItem.title}
-                      className="w-full h-full border-none bg-white"
-                    />
-                  ) : (
-                    <div className="p-8 text-center text-slate-500 flex flex-col items-center">
-                      <FileText className="w-12 h-12 text-slate-700 mb-3" />
-                      <p className="text-sm font-medium">プレビューファイルが見つかりません</p>
-                      <p className="text-xs text-slate-600 mt-1">（{currentItem.fileName} は未格納または別フォルダにあります）</p>
-                    </div>
-                  )}
+                  {(() => {
+                    const isCad = /\.(p21|sfc|dwg|dxf)$/i.test(currentItem.fileName || '');
+                    if (isCad) {
+                      return (
+                        <div className="p-8 max-w-lg text-center flex flex-col items-center bg-slate-900/60 border border-slate-800 rounded-2xl shadow-xl">
+                          <div className="w-16 h-16 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-4 shadow-inner">
+                            <Compass className="w-8 h-8" />
+                          </div>
+                          <span className="text-[11px] font-semibold text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-full border border-blue-500/20 mb-2">
+                            SXF (P21) CAD図面データ
+                          </span>
+                          <h4 className="text-base font-bold text-slate-100 mb-2 leading-snug">
+                            {currentItem.title}
+                          </h4>
+                          <div className="text-xs text-slate-400 space-y-1 mb-6 bg-slate-950/80 p-3 rounded-lg border border-slate-800 w-full text-left">
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">ファイル名:</span>
+                              <span className="font-mono text-slate-300">{currentItem.fileName}</span>
+                            </div>
+                            {('scale' in currentItem) && (currentItem as any).scale && (
+                              <div className="flex justify-between">
+                                <span className="text-slate-500">縮尺:</span>
+                                <span className="text-slate-300">{(currentItem as any).scale}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">形式:</span>
+                              <span className="text-slate-300">電子納品 CAD図面 (ISO 10303-21)</span>
+                            </div>
+                          </div>
+                          {currentItem.fileUrl ? (
+                            <a
+                              href={currentItem.fileUrl}
+                              download={currentItem.fileName}
+                              className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 transition active:scale-95"
+                            >
+                              <Download className="w-4 h-4" />
+                              <span>CAD図面ファイルをダウンロード</span>
+                            </a>
+                          ) : (
+                            <p className="text-xs text-amber-400">ファイルの実体が読み込まれていません</p>
+                          )}
+                          <p className="text-[11px] text-slate-500 mt-3">
+                            ※SXF形式（.p21）は専用CADビューアまたは武蔵等のCADソフトで詳細を閲覧できます
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    if (currentItem.fileUrl) {
+                      return (
+                        <iframe
+                          src={currentItem.fileUrl}
+                          title={currentItem.title}
+                          className="w-full h-full border-none bg-white"
+                        />
+                      );
+                    }
+
+                    return (
+                      <div className="p-8 text-center text-slate-500 flex flex-col items-center">
+                        <FileText className="w-12 h-12 text-slate-700 mb-3" />
+                        <p className="text-sm font-medium">プレビューファイルが見つかりません</p>
+                        <p className="text-xs text-slate-600 mt-1">（{currentItem.fileName} は未格納または別フォルダにあります）</p>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 下部: 検査確認バー */}
