@@ -83,22 +83,16 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   onSelectPhoto,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<'docs' | 'photos'>(
+  const [internalTab, setInternalTab] = useState<'docs' | 'photos'>(
     viewMode === 'photo-only' ? 'photos' : 'docs'
   );
+  const activeTab = viewMode ? (viewMode === 'photo-only' ? 'photos' : 'docs') : internalTab;
   const [photoTreeMode, setPhotoTreeMode] = useState<'workTree' | 'timeline' | 'category' | 'station'>('workTree');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 外部の viewMode と内部の activeTab を同期
-  React.useEffect(() => {
-    if (viewMode) {
-      setActiveTab(viewMode === 'photo-only' ? 'photos' : 'docs');
-    }
-  }, [viewMode]);
-
   // タブ切り替えハンドラ
   const handleTabChange = (tab: 'docs' | 'photos') => {
-    setActiveTab(tab);
+    setInternalTab(tab);
     onViewModeChange?.(tab === 'docs' ? 'doc-only' : 'photo-only');
   };
 
@@ -175,7 +169,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
 
     if (drawings.length > 0) {
       rawGroups['完成図面・設計図'] = {
-        '完成図面一式': { type: 'drawing', items: drawings },
+        '完成図面一式': { type: 'drawing', items: [...drawings] },
       };
     }
 

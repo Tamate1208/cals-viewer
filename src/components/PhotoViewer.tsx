@@ -14,6 +14,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import type { InspectionRecord, PhotoItem } from '../types/cals';
+import { buildPhotoRecord } from '../utils/inspectionRecord';
 
 interface PhotoViewerProps {
   photos: PhotoItem[];
@@ -126,8 +127,10 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
     }
   }, [filteredPhotos, sortOrder]);
 
-  // 選択された写真が変わった場合、フィルターに含まれていなければフィルターをリセット
-  useEffect(() => {
+  // 選択された写真が現在のフィルターで非表示になっている場合、フィルターを解除（レンダー中同期調整）
+  const [prevSelectedId, setPrevSelectedId] = useState<string | null>(null);
+  if (selectedPhotoId !== prevSelectedId) {
+    setPrevSelectedId(selectedPhotoId);
     if (selectedPhotoId) {
       const photo = photos.find(p => p.id === selectedPhotoId);
       if (photo) {
@@ -139,7 +142,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
         }
       }
     }
-  }, [selectedPhotoId, photos, selectedCategory, selectedWorkType]);
+  }
 
   // 選択された写真が変わった時、その写真カードの位置へスムーズスクロール
   // （別窓内でも動作するよう、scrollContainerRef の ownerDocument を参照）
@@ -174,36 +177,13 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
   // 検査ステータス更新
   const handleSetStatus = (photo: PhotoItem, status: 'ok' | 'issue') => {
     const rec = inspectionRecords[photo.id];
-    onUpdateInspection({
-      targetId: photo.id,
-      targetType: 'photo',
-      targetTitle: photo.title,
-      status: rec?.status === status ? 'pending' : status,
-      notes: rec?.notes || '',
-      updatedAt: new Date().toLocaleString('ja-JP'),
-      fileName: photo.fileName,
-      groupTitle: photo.workType || photo.category,
-      fileRole: photo.workKind ? `${photo.workKind}${photo.workDetail ? ' / ' + photo.workDetail : ''}` : undefined,
-      subCategory: photo.category,
-      locationOrDate: [photo.station ? `測点: ${photo.station}` : '', photo.date ? `撮影: ${photo.date}` : ''].filter(Boolean).join(' | '),
-    });
+    const newStatus = rec?.status === status ? 'pending' : status;
+    onUpdateInspection(buildPhotoRecord(photo, newStatus, rec?.notes || ''));
   };
 
   const handleUpdateNotes = (photo: PhotoItem, notes: string) => {
     const rec = inspectionRecords[photo.id];
-    onUpdateInspection({
-      targetId: photo.id,
-      targetType: 'photo',
-      targetTitle: photo.title,
-      status: rec?.status || 'issue',
-      notes,
-      updatedAt: new Date().toLocaleString('ja-JP'),
-      fileName: photo.fileName,
-      groupTitle: photo.workType || photo.category,
-      fileRole: photo.workKind ? `${photo.workKind}${photo.workDetail ? ' / ' + photo.workDetail : ''}` : undefined,
-      subCategory: photo.category,
-      locationOrDate: [photo.station ? `測点: ${photo.station}` : '', photo.date ? `撮影: ${photo.date}` : ''].filter(Boolean).join(' | '),
-    });
+    onUpdateInspection(buildPhotoRecord(photo, rec?.status || 'issue', notes));
   };
 
   return (
@@ -268,7 +248,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
             <ArrowUpDown className="w-3.5 h-3.5 text-blue-400 shrink-0" />
             <select
               value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as any)}
+              onChange={(e) => setSortOrder(e.target.value as 'date-asc' | 'date-desc' | 'station' | 'serial')}
               className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer"
               title="写真の表示順序を変更"
             >

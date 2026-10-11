@@ -12,6 +12,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import type { ConstructionInfo, DrawingItem, InspectionRecord, PhotoItem, ReportItem } from '../types/cals';
+import { isValidInspectionBackup, resolveRecordMeta } from '../utils/inspectionRecord';
 
 interface InspectionReportViewProps {
   constructionInfo: ConstructionInfo;
@@ -47,44 +48,10 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
   const displayedRecords = filterMode === 'issue-only' ? issueRecords : records;
   const uninspectedCount = totalItemsCount > records.length ? totalItemsCount - records.length : 0;
 
+  const [reportDate] = useState(() => new Date().toLocaleDateString('ja-JP'));
+
   // 書類・図面・写真の詳細メタデータを解決（保存済み値 優先、未保存時はIDから逆引き）
-  const resolveMeta = (r: InspectionRecord) => {
-    let fileName = r.fileName;
-    let groupTitle = r.groupTitle;
-    let fileRole = r.fileRole;
-    let subCategory = r.subCategory;
-    let locationOrDate = r.locationOrDate;
-
-    if (r.targetType === 'report') {
-      const doc = reports.find(d => d.id === r.targetId);
-      if (doc) {
-        fileName = fileName || doc.fileName;
-        groupTitle = groupTitle || doc.groupTitle || doc.type;
-        fileRole = fileRole || doc.fileRole;
-        subCategory = subCategory || doc.type;
-        locationOrDate = locationOrDate || doc.createDate;
-      }
-    } else if (r.targetType === 'drawing') {
-      const dwg = drawings.find(d => d.id === r.targetId);
-      if (dwg) {
-        fileName = fileName || dwg.fileName;
-        groupTitle = groupTitle || dwg.type;
-        fileRole = fileRole || (dwg.scale ? `縮尺: ${dwg.scale}` : undefined);
-        subCategory = subCategory || dwg.type;
-      }
-    } else if (r.targetType === 'photo') {
-      const pic = photos.find(p => p.id === r.targetId);
-      if (pic) {
-        fileName = fileName || pic.fileName;
-        groupTitle = groupTitle || pic.workType || pic.category;
-        fileRole = fileRole || (pic.workKind ? `${pic.workKind}${pic.workDetail ? ' / ' + pic.workDetail : ''}` : undefined);
-        subCategory = subCategory || pic.category;
-        locationOrDate = locationOrDate || [pic.station ? `測点: ${pic.station}` : '', pic.date ? `撮影: ${pic.date}` : ''].filter(Boolean).join(' | ');
-      }
-    }
-
-    return { fileName, groupTitle, fileRole, subCategory, locationOrDate };
-  };
+  const resolveMeta = (r: InspectionRecord) => resolveRecordMeta(r, reports, drawings, photos);
 
   // JSONバックアップ保存（エクスポート）
   const handleExportJson = () => {
@@ -106,8 +73,8 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const parsed = JSON.parse(event.target?.result as string);
-        if (typeof parsed === 'object' && parsed !== null) {
+        const parsed: unknown = JSON.parse(event.target?.result as string);
+        if (isValidInspectionBackup(parsed)) {
           if (onImportBackup) {
             onImportBackup(parsed);
           }
@@ -295,7 +262,7 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
             <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl print:border print:border-gray-300">
               <div className="text-[11px] text-slate-400 print:text-gray-600 font-medium">調書作成日時</div>
               <div className="text-xs font-semibold text-slate-200 print:text-black mt-2">
-                {new Date().toLocaleDateString('ja-JP')}
+                {reportDate}
               </div>
             </div>
           </div>

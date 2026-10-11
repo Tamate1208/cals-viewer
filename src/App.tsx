@@ -1,6 +1,14 @@
 import React, { useCallback, useRef, useState } from 'react';
 import type { DeliveryDataset, InspectionRecord } from './types/cals';
 import { revokeDatasetBlobUrls } from './utils/fileLoader';
+import {
+  buildDrawingRecord,
+  buildPhotoRecord,
+  buildReportRecord,
+  clearStoredRecords,
+  loadStoredRecords,
+  saveStoredRecords,
+} from './utils/inspectionRecord';
 
 import { Header } from './components/Header';
 import { FileDropZone } from './components/FileDropZone';
@@ -67,22 +75,16 @@ export const App: React.FC = () => {
       setShowModeSelectModal(false);
     }
 
-    const storageKey = `cals_inspection_${newDataset.constructionInfo.constructionName}`;
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setInspectionRecords(parsed);
-        const count = Object.keys(parsed).length;
-        if (count > 0) {
-          const okC = Object.values(parsed).filter((r: any) => r.status === 'ok').length;
-          const issueC = Object.values(parsed).filter((r: any) => r.status === 'issue').length;
-          showToast(`前回の検査記録（適: ${okC}件 / 指摘: ${issueC}件）を自動復元しました`, 4000);
-        }
-      } else {
-        setInspectionRecords({});
+    const savedRecords = loadStoredRecords(newDataset.constructionInfo.constructionName);
+    if (savedRecords) {
+      setInspectionRecords(savedRecords);
+      const count = Object.keys(savedRecords).length;
+      if (count > 0) {
+        const okC = Object.values(savedRecords).filter(r => r.status === 'ok').length;
+        const issueC = Object.values(savedRecords).filter(r => r.status === 'issue').length;
+        showToast(`前回の検査記録（適: ${okC}件 / 指摘: ${issueC}件）を自動復元しました`, 4000);
       }
-    } catch {
+    } else {
       setInspectionRecords({});
     }
   };
@@ -108,12 +110,7 @@ export const App: React.FC = () => {
       };
 
       if (dataset) {
-        const storageKey = `cals_inspection_${dataset.constructionInfo.constructionName}`;
-        try {
-          localStorage.setItem(storageKey, JSON.stringify(updated));
-        } catch (e) {
-          console.warn('localStorage save failed:', e);
-        }
+        saveStoredRecords(dataset.constructionInfo.constructionName, updated);
       }
 
       return updated;
@@ -154,66 +151,26 @@ export const App: React.FC = () => {
     // 1. 写真
     dataset.photos.forEach(p => {
       if (!updated[p.id] || updated[p.id].status !== 'issue') {
-        updated[p.id] = {
-          targetId: p.id,
-          targetType: 'photo',
-          targetTitle: p.title || p.fileName,
-          status: 'ok',
-          notes: updated[p.id]?.notes || '',
-          updatedAt: now,
-          fileName: p.fileName,
-          groupTitle: p.workType || p.category,
-          fileRole: p.workKind ? `${p.workKind}${p.workDetail ? ' / ' + p.workDetail : ''}` : undefined,
-          subCategory: p.category,
-          locationOrDate: [p.station ? `測点: ${p.station}` : '', p.date ? `撮影: ${p.date}` : ''].filter(Boolean).join(' | '),
-        };
+        updated[p.id] = buildPhotoRecord(p, 'ok', updated[p.id]?.notes, now);
       }
     });
 
     // 2. 報告書
     dataset.reports.forEach(r => {
       if (!updated[r.id] || updated[r.id].status !== 'issue') {
-        updated[r.id] = {
-          targetId: r.id,
-          targetType: 'report',
-          targetTitle: r.title || r.fileName,
-          status: 'ok',
-          notes: updated[r.id]?.notes || '',
-          updatedAt: now,
-          fileName: r.fileName,
-          groupTitle: r.groupTitle || r.type,
-          fileRole: r.fileRole,
-          subCategory: r.type,
-          locationOrDate: r.createDate,
-        };
+        updated[r.id] = buildReportRecord(r, 'ok', updated[r.id]?.notes, now);
       }
     });
 
     // 3. 図面
     dataset.drawings.forEach(d => {
       if (!updated[d.id] || updated[d.id].status !== 'issue') {
-        updated[d.id] = {
-          targetId: d.id,
-          targetType: 'drawing',
-          targetTitle: d.title || d.fileName,
-          status: 'ok',
-          notes: updated[d.id]?.notes || '',
-          updatedAt: now,
-          fileName: d.fileName,
-          groupTitle: d.type,
-          fileRole: d.scale ? `縮尺: ${d.scale}` : undefined,
-          subCategory: d.type,
-        };
+        updated[d.id] = buildDrawingRecord(d, 'ok', updated[d.id]?.notes, now);
       }
     });
 
     setInspectionRecords(updated);
-    const storageKey = `cals_inspection_${dataset.constructionInfo.constructionName}`;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-    } catch (e) {
-      console.warn('localStorage save failed:', e);
-    }
+    saveStoredRecords(dataset.constructionInfo.constructionName, updated);
 
     showToast(`未確認の ${uninspected} 件を一括で「適」に更新しました`, 3500);
   };
@@ -229,12 +186,7 @@ export const App: React.FC = () => {
     if (!confirmed) return;
 
     setInspectionRecords({});
-    const storageKey = `cals_inspection_${dataset.constructionInfo.constructionName}`;
-    try {
-      localStorage.removeItem(storageKey);
-    } catch (e) {
-      console.warn('localStorage remove failed:', e);
-    }
+    clearStoredRecords(dataset.constructionInfo.constructionName);
 
     showToast('検査記録をリセットしました', 3000);
   };
@@ -243,12 +195,7 @@ export const App: React.FC = () => {
   const handleImportBackup = (importedRecords: Record<string, InspectionRecord>) => {
     if (!dataset) return;
     setInspectionRecords(importedRecords);
-    const storageKey = `cals_inspection_${dataset.constructionInfo.constructionName}`;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(importedRecords));
-    } catch (e) {
-      console.warn('localStorage save failed:', e);
-    }
+    saveStoredRecords(dataset.constructionInfo.constructionName, importedRecords);
     showToast(`バックアップから ${Object.keys(importedRecords).length} 件の記録を復元しました`, 4000);
   };
 

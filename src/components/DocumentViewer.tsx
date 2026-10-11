@@ -9,6 +9,7 @@ import {
   Compass
 } from 'lucide-react';
 import type { ConstructionInfo, DrawingItem, InspectionRecord, ReportItem } from '../types/cals';
+import { buildDrawingRecord, buildReportRecord } from '../utils/inspectionRecord';
 
 
 interface DocumentViewerProps {
@@ -47,45 +48,22 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   // 検査ステータス更新
   const handleSetStatus = (status: 'ok' | 'issue') => {
-    if (!currentItem) return;
+    const newStatus = currentRecord?.status === status ? 'pending' : status;
     const isDoc = activeTab === 'reports';
-    const reportItem = isDoc ? (currentItem as ReportItem) : undefined;
-    const drawingItem = !isDoc ? (currentItem as DrawingItem) : undefined;
-
-    onUpdateInspection({
-      targetId: currentItem.id,
-      targetType: isDoc ? 'report' : 'drawing',
-      targetTitle: currentItem.title,
-      status: currentRecord?.status === status ? 'pending' : status,
-      notes: currentRecord?.notes || '',
-      updatedAt: new Date().toLocaleString('ja-JP'),
-      fileName: currentItem.fileName,
-      groupTitle: reportItem?.groupTitle || (isDoc ? currentItem.type : '完成図面'),
-      fileRole: reportItem?.fileRole || (drawingItem?.scale ? `縮尺: ${drawingItem.scale}` : undefined),
-      subCategory: currentItem.type,
-      locationOrDate: reportItem?.createDate,
-    });
+    const record = isDoc
+      ? buildReportRecord(currentItem as ReportItem, newStatus, currentRecord?.notes || '')
+      : buildDrawingRecord(currentItem as DrawingItem, newStatus, currentRecord?.notes || '');
+    onUpdateInspection(record);
   };
 
   const handleUpdateNotes = (notes: string) => {
     if (!currentItem) return;
     const isDoc = activeTab === 'reports';
-    const reportItem = isDoc ? (currentItem as ReportItem) : undefined;
-    const drawingItem = !isDoc ? (currentItem as DrawingItem) : undefined;
-
-    onUpdateInspection({
-      targetId: currentItem.id,
-      targetType: isDoc ? 'report' : 'drawing',
-      targetTitle: currentItem.title,
-      status: currentRecord?.status || 'issue',
-      notes,
-      updatedAt: new Date().toLocaleString('ja-JP'),
-      fileName: currentItem.fileName,
-      groupTitle: reportItem?.groupTitle || (isDoc ? currentItem.type : '完成図面'),
-      fileRole: reportItem?.fileRole || (drawingItem?.scale ? `縮尺: ${drawingItem.scale}` : undefined),
-      subCategory: currentItem.type,
-      locationOrDate: reportItem?.createDate,
-    });
+    const status = currentRecord?.status || 'issue';
+    const record = isDoc
+      ? buildReportRecord(currentItem as ReportItem, status, notes)
+      : buildDrawingRecord(currentItem as DrawingItem, status, notes);
+    onUpdateInspection(record);
   };
 
   return (
@@ -194,10 +172,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                               <span className="text-slate-500">ファイル名:</span>
                               <span className="font-mono text-slate-300">{currentItem.fileName}</span>
                             </div>
-                            {('scale' in currentItem) && (currentItem as any).scale && (
+                            {'scale' in currentItem && (currentItem as DrawingItem).scale && (
                               <div className="flex justify-between">
                                 <span className="text-slate-500">縮尺:</span>
-                                <span className="text-slate-300">{(currentItem as any).scale}</span>
+                                <span className="text-slate-300">{(currentItem as DrawingItem).scale}</span>
                               </div>
                             )}
                             <div className="flex justify-between">

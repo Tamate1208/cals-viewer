@@ -273,7 +273,7 @@ export async function loadFromDirectory(
   const len = fileList.length;
   for (let i = 0; i < len; i++) {
     const file = fileList[i];
-    const path = (file as any).webkitRelativePath || file.name;
+    const path = file.webkitRelativePath || file.name;
     const parts = path.split('/');
     if (parts.length > 1 && rootFolderName === '電子納品フォルダ') {
       rootFolderName = parts[0];

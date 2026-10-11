@@ -45,9 +45,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
       const dataset = await loadFromDirectory(files, (msg) => setProgressMessage(msg));
       onDatasetLoaded(dataset);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setErrorMessage(`読み込み中にエラーが発生しました: ${err.message || '不明なエラー'}`);
+      const msg = err instanceof Error ? err.message : '不明なエラー';
+      setErrorMessage(`読み込み中にエラーが発生しました: ${msg}`);
     } finally {
       setIsLoading(false);
     }
@@ -67,9 +68,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
       const dataset = await loadFromZip(file, (msg) => setProgressMessage(msg));
       onDatasetLoaded(dataset);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setErrorMessage(`ZIP展開・読み込み中にエラーが発生しました: ${err.message || '不明なエラー'}`);
+      const msg = err instanceof Error ? err.message : '不明なエラー';
+      setErrorMessage(`ZIP展開・読み込み中にエラーが発生しました: ${msg}`);
     } finally {
       setIsLoading(false);
     }
@@ -101,9 +103,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
       await new Promise(r => setTimeout(r, 80));
       const dataset = await loadFromDirectory(files, (msg) => setProgressMessage(msg));
       onDatasetLoaded(dataset);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setErrorMessage(`ファイルの読み込みに失敗しました: ${err.message}`);
+      const msg = err instanceof Error ? err.message : '不明なエラー';
+      setErrorMessage(`ファイルの読み込みに失敗しました: ${msg}`);
     } finally {
       setIsLoading(false);
     }
