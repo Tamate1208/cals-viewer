@@ -1,14 +1,19 @@
+export type CalsDeliveryType = 'construction' | 'consignment'; // 'construction': 土木工事(INDEX_C), 'consignment': 業務委託(INDEX_D)
+
 export interface ConstructionInfo {
-  constructionName: string;      // 工事名称
+  deliveryType?: CalsDeliveryType; // 成果品区分 (土木工事 / 業務委託)
+  constructionName: string;      // 工事名称 または 業務名称
   lineRiverName: string;          // 路線・河川名
-  clientName: string;             // 発注者名称 (例: 広島県西部建設事務所)
+  clientName: string;             // 発注者名称 (例: 広島県北部建設事務所)
   contractorName: string;         // 請負者・受注者名称
-  contractNumber?: string;        // 契約番号
-  startDate?: string;             // 工期開始
-  endDate?: string;               // 工期完了
-  place?: string;                 // 工事場所
+  contractNumber?: string;        // 契約番号 / 業務実績登録番号
+  startDate?: string;             // 工期開始 / 履行期間-着手
+  endDate?: string;               // 工期完了 / 履行期間-完了
+  place?: string;                 // 工事場所 / 履行場所
   supervisor?: string;            // 監督員名
-  chiefEngineer?: string;         // 主任技術者・監理技術者名
+  chiefEngineer?: string;         // 主任技術者・管理技術者名
+  overview?: string;              // 業務概要 (業務委託用)
+  keywords?: string[];            // 業務キーワード (業務委託用)
 }
 
 export interface BlackboardItem {
@@ -70,6 +75,7 @@ export interface InspectionRecord {
 }
 
 export interface DeliveryDataset {
+  deliveryType: CalsDeliveryType; // 'construction' | 'consignment'
   constructionInfo: ConstructionInfo;
   photos: PhotoItem[];
   reports: ReportItem[];

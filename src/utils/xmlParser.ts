@@ -870,3 +870,294 @@ export function parseDrawingXml(xmlString: string): DrawingItem[] {
 
   return items;
 }
+
+// ==============================================================================
+// 業務委託成果品 (INDEX_D.XML 体系) 専用パーサー群
+// ==============================================================================
+
+/**
+ * 業務委託管理ファイル (INDEX_D.XML) のパース
+ * 国土交通省・GioV「設計業務等の電子納品要領 (INDE_D03.DTD等)」に対応
+ */
+export function parseConsignmentIndexXml(xmlString: string): ConstructionInfo {
+  const doc = parseXmlString(xmlString);
+  const root = doc.documentElement;
+
+  // 1. 業務名称 (<業務件名等> -> <業務名称>)
+  const constructionName =
+    getElementText(root, '業務名称', '業務名', '業務件名', 'business_name', 'project_name', 'title') ||
+    '（名称未設定業務）';
+
+  // 2. 路線・河川名 (<水系-路線情報> 等)
+  const lineRiverName =
+    getElementText(root, '水系-路線情報', '路線河川名', '路線名', '河川名', 'line_river_name');
+
+  // 3. 発注者機関事務所名 (<発注者情報> -> <発注者機関事務所名> / <発注者名>)
+  let clientName = '';
+  const clientNodes = findDescendantElements(root, '発注者情報', 'client');
+  if (clientNodes.length > 0) {
+    clientName = getElementText(clientNodes[0], '発注者機関事務所名', '発注者機関名', '発注者名', 'client_name');
+  }
+  if (!clientName) {
+    clientName = getElementText(root, '発注者機関事務所名', '発注者名', 'client_name');
+  }
+  if (!clientName) clientName = 'GioV';
+
+  // 4. 受注者名 (<受注者情報> -> <受注者名>)
+  let contractorName = '';
+  const contractorNodes = findDescendantElements(root, '受注者情報', 'contractor');
+  if (contractorNodes.length > 0) {
+    contractorName = getElementText(contractorNodes[0], '受注者名', 'contractor_name');
+  }
+  if (!contractorName) {
+    contractorName = getElementText(root, '受注者名', '受託者名', '受託者', 'contractor_name') || '（受注者未設定）';
+  }
+
+  // 5. 契約番号 / 業務実績登録番号 / 設計書コード
+  const contractNumber =
+    getElementText(root, '業務実績システム登録番号', '設計書コード', '業務番号', 'contract_number', 'contract_no');
+
+  // 6. 履行期間 (<履行期間-着手> / <履行期間-完了>)
+  const startDate = normalizeCalsDate(
+    getElementText(root, '履行期間-着手', '着手日', '工期開始日', 'start_date', 'term_start')
+  );
+  const endDate = normalizeCalsDate(
+    getElementText(root, '履行期間-完了', '完了日', '工期終了日', 'end_date', 'term_end')
+  );
+
+  // 7. 業務場所 (<住所情報> -> <住所>)
+  let place = '';
+  const addressNodes = findDescendantElements(root, '住所情報');
+  if (addressNodes.length > 0) {
+    place = getElementText(addressNodes[0], '住所');
+  }
+  if (!place) {
+    place = getElementText(root, '住所', '履行場所', '業務場所', 'location', 'place');
+  }
+
+  // 8. 監督員 / 管理技術者
+  const supervisor = getElementText(root, '監督員', '監督員名', '検査員', 'supervisor');
+  const chiefEngineer = getElementText(root, '管理技術者', '管理技術者名', '主任技術者名', 'chief_engineer');
+
+  // 9. 業務概要 (<業務情報> -> <業務概要>)
+  const overview = getElementText(root, '業務概要', 'overview', 'summary');
+
+  // 10. 業務キーワード (<業務情報> -> <業務キーワード>)
+  const keywordNodes = findDescendantElements(root, '業務キーワード', 'keyword');
+  const keywords: string[] = [];
+  keywordNodes.forEach(node => {
+    const kw = node.textContent?.trim();
+    if (kw && !keywords.includes(kw)) {
+      keywords.push(kw);
+    }
+  });
+
+  return {
+    deliveryType: 'consignment',
+    constructionName,
+    lineRiverName,
+    clientName,
+    contractorName,
+    contractNumber,
+    startDate,
+    endDate,
+    place,
+    supervisor,
+    chiefEngineer,
+    overview,
+    keywords,
+  };
+}
+
+/**
+ * 業務委託報告書ファイル (REPORT/REPORT.XML) のパース
+ * 国土交通省・GioV「設計業務等の電子納品要領 (REP03.DTD / REP04.DTD等)」に対応
+ */
+export function parseConsignmentReportXml(xmlString: string): ReportItem[] {
+  const doc = parseXmlString(xmlString);
+  const items: ReportItem[] = [];
+
+  // <報告書ファイル情報> の走査
+  const repFileNodes = findDescendantElements(doc, '報告書ファイル情報', 'report_file_info');
+
+  repFileNodes.forEach((node, rIndex) => {
+    const reportName = getElementText(node, '報告書名', '名称', 'name', 'title') || `報告書 ${rIndex + 1}`;
+    const subTitle = getElementText(node, '報告書副題', '副題', 'sub_title');
+    const fileName = getElementText(node, '報告書ファイル名', 'ファイル名', 'file_name', 'filename');
+    const jpFileName = getElementText(node, '報告書ファイル日本語名');
+    const appName = getElementText(node, '報告書ファイル作成ソフトウェア名');
+
+    const fullTitle = subTitle ? `${reportName} (${subTitle})` : reportName;
+    const summaryText = `${fullTitle} [${appName || 'PDF'}]${jpFileName ? ` (${jpFileName})` : ''}`;
+
+    if (fileName) {
+      items.push({
+        id: `REP_D_${rIndex + 1}`,
+        title: fullTitle,
+        type: reportName,
+        fileName,
+        filePath: fileName,
+        summary: summaryText,
+        groupTitle: reportName,
+        fileRole: '報告書(PDF)',
+      });
+    }
+
+    // オリジナルファイル (<報告書オリジナルファイル情報>)
+    const origNodes = findDescendantElements(node, '報告書オリジナルファイル情報');
+    origNodes.forEach((origNode, oIdx) => {
+      const origFileName = getElementText(origNode, '報告書オリジナルファイル名', 'オリジナルファイル名', 'file_name');
+      const origJpName = getElementText(origNode, '報告書オリジナルファイル日本語名');
+      const origApp = getElementText(origNode, '報告書オリジナルファイル作成ソフトウェア名');
+
+      if (origFileName) {
+        items.push({
+          id: `REP_D_${rIndex + 1}_ORIG_${oIdx + 1}`,
+          title: `${reportName} - ${origJpName || origFileName}`,
+          type: reportName,
+          fileName: origFileName,
+          filePath: origFileName,
+          summary: `オリジナルファイル: ${origJpName || origFileName} (${origApp || '原典'})`,
+          groupTitle: reportName,
+          fileRole: 'オリジナル原典',
+        });
+      }
+    });
+  });
+
+  // もし業務委託の <報告書ファイル情報> が見当たらなければ通常の parseReportXml をフォールバック
+  if (items.length === 0) {
+    return parseReportXml(xmlString);
+  }
+
+  return items;
+}
+
+/**
+ * 地質・ボーリング調査ファイル (BORING/BORING.XML) のパース
+ * 地質・土質調査成果電子納品要領 (BRG0150.DTD / BRG0200.DTD等) に対応
+ * 電子柱状図PDF (BRGxxxx.PDF) を書類リストとして統合
+ */
+export function parseConsignmentBoringXml(xmlString: string): ReportItem[] {
+  const doc = parseXmlString(xmlString);
+  const items: ReportItem[] = [];
+
+  const boringNodes = findDescendantElements(doc, 'ボーリング情報', 'boring_info', 'boring');
+
+  boringNodes.forEach((node, bIndex) => {
+    const boringName = getElementText(node, 'ボーリング名', '孔名', 'name') || `Bor-${bIndex + 1}`;
+    const serial = getElementText(node, 'ボーリング連番', '連番') || String(bIndex + 1).padStart(4, '0');
+    const elev = getElementText(node, '孔口標高', '標高');
+    const depth = getElementText(node, '掘進長', '深度');
+    const category = getElementText(node, '柱状図区分', '区分') || '土質';
+
+    // <電子柱状図> -> <電子柱状図ファイル名>
+    const logNodes = findDescendantElements(node, '電子柱状図', 'log');
+    let logPdfName = '';
+    if (logNodes.length > 0) {
+      logPdfName = getElementText(logNodes[0], '電子柱状図ファイル名', 'ファイル名', 'file_name');
+    }
+    if (!logPdfName) {
+      logPdfName = getElementText(node, '電子柱状図ファイル名');
+    }
+
+    if (logPdfName) {
+      const elevText = elev ? `標高:${elev}m` : '';
+      const depthText = depth ? `掘進長:${depth}m` : '';
+      const meta = [elevText, depthText].filter(Boolean).join(', ');
+
+      items.push({
+        id: `BRG_${serial}_PDF`,
+        title: `柱状図: ${boringName}${meta ? ` (${meta})` : ''}`,
+        type: '地質柱状図',
+        fileName: logPdfName,
+        filePath: logPdfName,
+        summary: `ボーリング柱状図: ${boringName} [孔口標高: ${elev || '-'}m / 掘進長: ${depth || '-'}m / 区分: ${category}]`,
+        groupTitle: `地質柱状図 (${category})`,
+        fileRole: '電子柱状図PDF',
+      });
+    }
+  });
+
+  return items;
+}
+
+/**
+ * 業務委託写真ファイル (PHOTO/PHOTO.XML) のパース
+ * デジタル写真管理情報基準 (PHOTO04.DTD / 業務委託用) に対応
+ */
+export function parseConsignmentPhotoXml(xmlString: string): PhotoItem[] {
+  const doc = parseXmlString(xmlString);
+  const items: PhotoItem[] = [];
+
+  const photoNodes = findDescendantElements(doc, '写真情報', 'photo_info', 'photo');
+
+  photoNodes.forEach((node, index) => {
+    // 1. ファイル名
+    let fileName = '';
+    let jpFileName = '';
+    const fileInfoNodes = findDescendantElements(node, '写真ファイル情報');
+    if (fileInfoNodes.length > 0) {
+      fileName = getElementText(fileInfoNodes[0], '写真ファイル名', 'ファイル名', 'file_name');
+      jpFileName = getElementText(fileInfoNodes[0], '写真ファイル日本語名');
+    }
+    if (!fileName) {
+      fileName = getElementText(node, '写真ファイル名', 'file_name', 'filename') || `P${String(index + 1).padStart(7, '0')}.JPG`;
+    }
+
+    // 2. 撮影工種区分 (写真-大分類, 写真タイトル)
+    let majorCategory = '';
+    let photoTitle = '';
+    const shootDivNodes = findDescendantElements(node, '撮影工種区分');
+    if (shootDivNodes.length > 0) {
+      majorCategory = getElementText(shootDivNodes[0], '写真-大分類', '大分類');
+      photoTitle = getElementText(shootDivNodes[0], '写真タイトル', 'タイトル');
+    }
+    if (!majorCategory) {
+      majorCategory = getElementText(node, '写真-大分類', '大分類', '写真区分') || '調査・測量';
+    }
+    if (!photoTitle) {
+      photoTitle = getElementText(node, '写真タイトル', 'タイトル', 'caption') || jpFileName || (fileName ? fileName.replace(/\.[^.]+$/, '') : `写真 ${index + 1}`);
+    }
+
+    // 3. 撮影情報 (撮影年月日)
+    let shootDate = '';
+    const shootInfoNodes = findDescendantElements(node, '撮影情報');
+    if (shootInfoNodes.length > 0) {
+      shootDate = normalizeCalsDate(getElementText(shootInfoNodes[0], '撮影年月日', '撮影日', 'date'));
+    }
+    if (!shootDate) {
+      shootDate = normalizeCalsDate(getElementText(node, '撮影年月日', '撮影日', 'date'));
+    }
+
+    // 4. 黒板情報
+    const blackboardItems: BlackboardItem[] = [];
+    if (majorCategory) blackboardItems.push({ name: '大分類', value: majorCategory });
+    if (photoTitle) blackboardItems.push({ name: '写真タイトル', value: photoTitle });
+    if (shootDate) blackboardItems.push({ name: '撮影年月日', value: shootDate });
+
+    items.push({
+      id: `PHOTO_D_${index + 1}`,
+      title: photoTitle,
+      category: majorCategory,
+      type: '業務委託写真',
+      workType: majorCategory,
+      workKind: '',
+      workDetail: '',
+      date: shootDate,
+      station: '',
+      remarks: '',
+      fileName,
+      filePath: fileName,
+      blackboardItems,
+    });
+  });
+
+  // 見当たらなければ通常の parsePhotoXml にフォールバック
+  if (items.length === 0) {
+    return parsePhotoXml(xmlString);
+  }
+
+  return items;
+}
+

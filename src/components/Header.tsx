@@ -50,11 +50,18 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex items-center gap-2 bg-blue-600/30 text-blue-400 border border-blue-500/40 px-2.5 py-1 rounded text-xs font-semibold tracking-wide shrink-0">
             <ShieldCheck className="w-4 h-4 text-blue-400" />
-            <span>GioV 電子納品検査</span>
+            <span>GioV {constructionInfo.deliveryType === 'consignment' ? '業務委託成果' : '電子納品検査'}</span>
           </div>
           <div className="truncate">
             <h1 className="text-base sm:text-lg font-bold text-white tracking-tight truncate flex items-center gap-2">
-              <span>{constructionInfo.constructionName}</span>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border shrink-0 ${
+                constructionInfo.deliveryType === 'consignment'
+                  ? 'bg-purple-900/40 text-purple-300 border-purple-500/50'
+                  : 'bg-emerald-900/40 text-emerald-300 border-emerald-500/50'
+              }`}>
+                {constructionInfo.deliveryType === 'consignment' ? '業務委託' : '土木工事'}
+              </span>
+              <span title={constructionInfo.overview || undefined}>{constructionInfo.constructionName}</span>
               {constructionInfo.lineRiverName && (
                 <span className="text-xs font-normal text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
                   {constructionInfo.lineRiverName}
@@ -64,9 +71,9 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* 右側: 検査対象切替（書類・図面 / 工事写真） ＆ アクション */}
+        {/* 右側: 検査対象切替（書類・図面 / 写真） ＆ アクション */}
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          {/* 検査対象モード切替トグル [書類・図面] [工事写真] */}
+          {/* 検査対象モード切替トグル [書類・図面] [写真] */}
           <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700 text-xs">
             <button
               onClick={() => onViewModeChange('doc-only')}
@@ -89,10 +96,10 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-blue-600 text-white shadow-sm' 
                   : hasPhotos ? 'text-slate-300 hover:text-white' : 'text-slate-600 cursor-not-allowed'
               }`}
-              title="工事写真を全画面表示"
+              title={`${constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真'}を全画面表示`}
             >
               <Image className="w-3.5 h-3.5" />
-              <span>工事写真</span>
+              <span>{constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真'}</span>
             </button>
           </div>
 
@@ -123,7 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* 下段: 発注者・請負者・工期 & 検査進捗ゲージ */}
+      {/* 下段: 発注者・請負者・工期/履行期間 & 検査進捗ゲージ */}
       <div className="bg-slate-950/70 px-4 py-1.5 flex flex-wrap items-center justify-between text-xs text-slate-400 border-t border-slate-800/60 gap-y-1">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <div className="flex items-center gap-1 text-slate-300">
@@ -133,13 +140,13 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <div className="flex items-center gap-1 text-slate-300">
             <UserCheck className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-400">受注:</span>
+            <span className="text-slate-400">{constructionInfo.deliveryType === 'consignment' ? '受注:' : '請負:'}</span>
             <span className="font-medium text-slate-200">{constructionInfo.contractorName || '未設定'}</span>
           </div>
           {(constructionInfo.startDate || constructionInfo.endDate) && (
             <div className="flex items-center gap-1 text-slate-300 hidden md:flex">
               <Calendar className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-slate-400">工期:</span>
+              <span className="text-slate-400">{constructionInfo.deliveryType === 'consignment' ? '履行期間:' : '工期:'}</span>
               <span>{constructionInfo.startDate || ''} 〜 {constructionInfo.endDate || ''}</span>
             </div>
           )}

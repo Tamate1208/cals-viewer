@@ -39,6 +39,33 @@ interface InspectionTreeNavProps {
   onSelectPhoto: (id: string) => void;
 }
 
+// 要領に準拠した書類大分類の規定順序 (業務委託: 設計報告書/計算書/柱状図, 土木: PLAN -> MEET -> DRAWING -> OTHRS)
+const DOC_CATEGORY_ORDER = [
+  '設計報告書',
+  '報告書',
+  '施工計画書',
+  '工事打合せ簿',
+  '打合せ簿',
+  '数量計算',
+  '地質柱状図',
+  '完成図面・設計図',
+  'その他資料',
+];
+
+// 要領に準拠した写真区分の規定順序 (デジタル写真管理情報基準)
+const PHOTO_CATEGORY_ORDER = [
+  '着手前及び完成写真',
+  '着工前及び完成写真',
+  '施工状況写真',
+  '安全管理写真',
+  '使用材料写真',
+  '出来形管理写真',
+  '品質管理写真',
+  '災害写真',
+  'その他写真',
+  'その他'
+];
+
 export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   reports,
   drawings,
@@ -91,22 +118,6 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     return !!expandedFolders[key];
   };
 
-  // 要領に準拠した書類大分類の規定順序 (PLAN -> MEET -> DRAWING -> OTHRS)
-  const DOC_CATEGORY_ORDER = ['施工計画書', '工事打合せ簿', '完成図面・設計図', 'その他資料'];
-
-  // 要領に準拠した写真区分の規定順序 (デジタル写真管理情報基準)
-  const PHOTO_CATEGORY_ORDER = [
-    '着手前及び完成写真',
-    '着工前及び完成写真',
-    '施工状況写真',
-    '安全管理写真',
-    '使用材料写真',
-    '出来形管理写真',
-    '品質管理写真',
-    '災害写真',
-    'その他写真',
-    'その他'
-  ];
 
   // すべて展開
   const handleExpandAll = () => {

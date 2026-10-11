@@ -1,6 +1,16 @@
 import JSZip from 'jszip';
 import type { DeliveryDataset, DrawingItem, PhotoItem, ReportItem } from '../types/cals';
-import { decodeXmlBuffer, parseDrawingXml, parseIndexXml, parsePhotoXml, parseReportXml } from './xmlParser';
+import {
+  decodeXmlBuffer,
+  parseConsignmentBoringXml,
+  parseConsignmentIndexXml,
+  parseConsignmentPhotoXml,
+  parseConsignmentReportXml,
+  parseDrawingXml,
+  parseIndexXml,
+  parsePhotoXml,
+  parseReportXml,
+} from './xmlParser';
 
 interface FileItem {
   name: string;
@@ -91,7 +101,7 @@ class FastFileIndex {
     // 1. パスマップでの探索 (basePrefix + folderHint + パスバリエーション)
     const prefixes = [basePrefix ? basePrefix.replace(/\\/g, '/').toLowerCase() : '', ''];
     const hints = folderHint ? [folderHint.toLowerCase(), ''] : [''];
-    const subDirs = ['', 'pic/', 'org/', 'org001/', 'org002/', 'dra/', 'pdf/'];
+    const subDirs = ['', 'pic/', 'org/', 'org001/', 'org002/', 'dra/', 'pdf/', 'log/', 'data/'];
 
     // 拡張子バリエーション (.jpg <-> .jpeg 等)
     const fileNameVariations = [baseFileName];
@@ -136,6 +146,20 @@ class FastFileIndex {
           if (preferred) return URL.createObjectURL(preferred.blob);
         }
         return URL.createObjectURL(matches[0].blob);
+      }
+    }
+
+    // 4. プレフィックス付きファイル名の解決 (例: 「【設計報告書】REPORT05.PDF」等)
+    for (const [key, items] of this.fileNameMap.entries()) {
+      for (const fn of fileNameVariations) {
+        if (key.endsWith(fn)) {
+          if (folderHint) {
+            const hintLower = folderHint.toLowerCase();
+            const preferred = items.find(m => m.relativePath.toLowerCase().includes(hintLower));
+            if (preferred) return URL.createObjectURL(preferred.blob);
+          }
+          if (items.length > 0) return URL.createObjectURL(items[0].blob);
+        }
       }
     }
 
@@ -239,17 +263,277 @@ export async function loadFromZip(
 }
 
 /**
- * FastFileIndex から CALS データを構築（ミリ秒単位で完了）
+ * FastFileIndex から CALS データを構築
+ * INDEXがCなら土木工事、Dなら業務委託で入り口から切り分ける
  */
 async function processIndex(
   index: FastFileIndex,
   folderName: string,
   onProgress?: (status: string) => void
 ): Promise<DeliveryDataset> {
-  onProgress?.('管理ファイル (INDEX_C.XML / INDEX_D.XML) を解析中...');
+  onProgress?.('成果品種別 (INDEX_C.XML / INDEX_D.XML) を判定中...');
 
-  // 1. INDEX_C.XML または INDEX_D.XML の探索
+  // 成果品種別の判定
+  const indexDEntries = index.findXml('INDEX_D.XML', 'INDEX_D03.XML', 'INDEX_D02.XML');
+  const indexCEntries = index.findXml('INDEX_C.XML', 'INDEX_C06.XML', 'INDEX_C05.XML', 'INDEX_C04.XML');
+
+  let isConsignment = false;
+  if (indexDEntries.length > 0) {
+    isConsignment = true;
+  } else if (indexCEntries.length > 0) {
+    isConsignment = false;
+  } else {
+    // パターン検索
+    const matchedD = index.findXmlByPattern(/^index_?d.*\.xml$/i);
+    const matchedC = index.findXmlByPattern(/^index_?c.*\.xml$/i);
+    if (matchedD.length > 0) {
+      isConsignment = true;
+    } else if (matchedC.length > 0) {
+      isConsignment = false;
+    } else {
+      // フォールバック: BORING.XML や REPORT.XML があれば業務委託
+      const boringXmls = index.findXml('BORING.XML');
+      isConsignment = boringXmls.length > 0;
+    }
+  }
+
+  if (isConsignment) {
+    console.info('CALS モード判定: 【業務委託成果品 (INDEX_D)】');
+    return processConsignmentIndex(index, folderName, onProgress);
+  } else {
+    console.info('CALS モード判定: 【土木工事成果品 (INDEX_C)】');
+    return processConstructionIndex(index, folderName, onProgress);
+  }
+}
+
+/**
+ * 業務委託成果品 (INDEX_D.XML) 専用データローダー
+ */
+async function processConsignmentIndex(
+  index: FastFileIndex,
+  folderName: string,
+  onProgress?: (status: string) => void
+): Promise<DeliveryDataset> {
+  onProgress?.('【業務委託】管理ファイル (INDEX_D.XML) を解析中...');
+
+  // 1. INDEX_D.XML の解析
   let constructionInfo = {
+    deliveryType: 'consignment' as const,
+    constructionName: folderName,
+    lineRiverName: '',
+    clientName: 'GioV',
+    contractorName: '',
+    contractNumber: '',
+    startDate: '',
+    endDate: '',
+    place: '',
+    supervisor: '',
+    chiefEngineer: '',
+    overview: '',
+    keywords: [] as string[],
+  };
+
+  let indexEntries = index.findXml('INDEX_D.XML', 'INDEX_D03.XML', 'INDEX_D02.XML');
+  if (indexEntries.length === 0) {
+    indexEntries = index.findXmlByPattern(/^index_?d.*\.xml$/i);
+  }
+
+  let basePrefix = '';
+  if (indexEntries.length > 0) {
+    try {
+      const buffer = await indexEntries[0].blob.arrayBuffer();
+      const xmlText = decodeXmlBuffer(buffer);
+      const parsed = parseConsignmentIndexXml(xmlText);
+      console.info(`INDEX_D XML (${indexEntries[0].relativePath}) parsed:`, parsed);
+
+      if (parsed.constructionName && parsed.constructionName !== '（名称未設定業務）') {
+        constructionInfo.constructionName = parsed.constructionName;
+      }
+      if (parsed.lineRiverName) constructionInfo.lineRiverName = parsed.lineRiverName;
+      if (parsed.clientName) constructionInfo.clientName = parsed.clientName;
+      if (parsed.contractorName) constructionInfo.contractorName = parsed.contractorName;
+      if (parsed.contractNumber) constructionInfo.contractNumber = parsed.contractNumber;
+      if (parsed.startDate) constructionInfo.startDate = parsed.startDate;
+      if (parsed.endDate) constructionInfo.endDate = parsed.endDate;
+      if (parsed.place) constructionInfo.place = parsed.place;
+      if (parsed.supervisor) constructionInfo.supervisor = parsed.supervisor;
+      if (parsed.chiefEngineer) constructionInfo.chiefEngineer = parsed.chiefEngineer;
+      if (parsed.overview) constructionInfo.overview = parsed.overview;
+      if (parsed.keywords) constructionInfo.keywords = parsed.keywords;
+
+      const lastSlash = indexEntries[0].relativePath.lastIndexOf('/');
+      if (lastSlash >= 0) {
+        basePrefix = indexEntries[0].relativePath.substring(0, lastSlash + 1).toLowerCase();
+      }
+    } catch (e) {
+      console.warn('INDEX_D XML parse failed:', e);
+    }
+  }
+
+  // 2. 業務写真 (PHOTO/PHOTO.XML - PHOTO04等) の解析
+  onProgress?.('【業務委託】写真XML (PHOTO.XML) を解析中...');
+  let photos: PhotoItem[] = [];
+  let photoXmlEntries = index.findXml('PHOTO.XML', 'PHOTO_D.XML', 'PHOTO04.XML');
+  if (photoXmlEntries.length === 0) {
+    photoXmlEntries = index.findXmlByPattern(/^photo.*\.xml$/i);
+  }
+
+  if (photoXmlEntries.length > 0) {
+    for (const entry of photoXmlEntries) {
+      try {
+        const buffer = await entry.blob.arrayBuffer();
+        const xmlText = decodeXmlBuffer(buffer);
+        const parsed = parseConsignmentPhotoXml(xmlText);
+        console.info(`PHOTO_D XML (${entry.relativePath}) parsed count:`, parsed.length);
+        photos.push(...parsed);
+      } catch (e) {
+        console.warn('PHOTO_D XML parse failed:', e);
+      }
+    }
+
+    const idSet = new Set<string>();
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i];
+      if (idSet.has(p.id)) {
+        p.id = `${p.id}_${i + 1}`;
+      }
+      idSet.add(p.id);
+      p.fileUrl = index.resolveBlobUrl(p.fileName, 'PHOTO', basePrefix);
+    }
+  } else {
+    const imageItems = index.getImageItems();
+    photos = imageItems.map((img, idx) => ({
+      id: `IMG_D_${idx + 1}`,
+      title: img.name,
+      category: '調査・測量',
+      type: '業務委託写真',
+      workType: '写真データ',
+      workKind: '',
+      workDetail: '',
+      date: '',
+      fileName: img.name,
+      filePath: img.relativePath,
+      fileUrl: URL.createObjectURL(img.blob),
+      blackboardItems: [],
+    }));
+  }
+
+  // 3. 業務報告書類 (REPORT/REPORT.XML) の解析
+  onProgress?.('【業務委託】報告書XML (REPORT.XML) を解析中...');
+  let reports: ReportItem[] = [];
+  let reportXmlEntries = index.findXml('REPORT.XML', 'REPORT_D.XML', 'REP03.XML', 'REP04.XML');
+  if (reportXmlEntries.length === 0) {
+    reportXmlEntries = index.findXmlByPattern(/^report.*\.xml$/i);
+  }
+
+  if (reportXmlEntries.length > 0) {
+    for (const entry of reportXmlEntries) {
+      try {
+        const buffer = await entry.blob.arrayBuffer();
+        const xmlText = decodeXmlBuffer(buffer);
+        const parsed = parseConsignmentReportXml(xmlText);
+        console.info(`REPORT_D XML (${entry.relativePath}) parsed count:`, parsed.length);
+        reports.push(...parsed);
+      } catch (e) {
+        console.warn('REPORT_D XML parse failed:', e);
+      }
+    }
+  }
+
+  // 4. 地質・ボーリング調査 (BORING/BORING.XML) の解析 & 電子柱状図PDF統合
+  onProgress?.('【業務委託】地質調査XML (BORING.XML) と電子柱状図PDFを検索中...');
+  let boringXmlEntries = index.findXml('BORING.XML', 'BORING_D.XML', 'BRG0150.XML');
+  if (boringXmlEntries.length === 0) {
+    boringXmlEntries = index.findXmlByPattern(/^boring.*\.xml$/i);
+  }
+
+  if (boringXmlEntries.length > 0) {
+    for (const bEntry of boringXmlEntries) {
+      try {
+        const buffer = await bEntry.blob.arrayBuffer();
+        const xmlText = decodeXmlBuffer(buffer);
+        const parsedBoring = parseConsignmentBoringXml(xmlText);
+        console.info(`BORING XML (${bEntry.relativePath}) parsed count:`, parsedBoring.length);
+        reports.push(...parsedBoring);
+      } catch (e) {
+        console.warn('BORING XML parse failed:', e);
+      }
+    }
+  }
+
+  // 報告書・柱状図の重複ID解消 & Blob URL 紐付け
+  const repIdSet = new Set<string>();
+  for (let i = 0; i < reports.length; i++) {
+    const r = reports[i];
+    if (repIdSet.has(r.id)) {
+      r.id = `${r.id}_${i + 1}`;
+    }
+    repIdSet.add(r.id);
+
+    // 柱状図の場合は BORING フォルダ優先、報告書の場合は REPORT フォルダ優先
+    const folderHint = r.type === '地質柱状図' ? 'BORING' : 'REPORT';
+    r.fileUrl = index.resolveBlobUrl(r.fileName, folderHint, basePrefix);
+  }
+
+  // 5. 設計図面 (DRAWING/DRAWING.XML) の解析
+  onProgress?.('【業務委託】設計図面XML (DRAWING.XML) を解析中...');
+  let drawings: DrawingItem[] = [];
+  let drawingXmlEntries = index.findXml('DRAWING.XML', 'DRAWING_D.XML', 'DRAW03.XML', 'DRAW04.XML');
+  if (drawingXmlEntries.length === 0) {
+    drawingXmlEntries = index.findXmlByPattern(/^drawing.*\.xml$/i);
+  }
+
+  if (drawingXmlEntries.length > 0) {
+    for (const entry of drawingXmlEntries) {
+      try {
+        const buffer = await entry.blob.arrayBuffer();
+        const xmlText = decodeXmlBuffer(buffer);
+        const parsed = parseDrawingXml(xmlText);
+        console.info(`DRAWING_D XML (${entry.relativePath}) parsed count:`, parsed.length);
+        drawings.push(...parsed);
+      } catch (e) {
+        console.warn('DRAWING_D XML parse failed:', e);
+      }
+    }
+
+    const idSet = new Set<string>();
+    for (let i = 0; i < drawings.length; i++) {
+      const d = drawings[i];
+      if (idSet.has(d.id)) {
+        d.id = `${d.id}_${i + 1}`;
+      }
+      idSet.add(d.id);
+      d.fileUrl = index.resolveBlobUrl(d.fileName, 'DRAWING', basePrefix);
+    }
+  }
+
+  onProgress?.('【業務委託】解析完了！画面を描画しています...');
+
+  return {
+    deliveryType: 'consignment',
+    constructionInfo,
+    photos,
+    reports,
+    drawings,
+    otherFiles: [],
+    loadedAt: new Date().toLocaleString('ja-JP'),
+    folderName,
+  };
+}
+
+/**
+ * 土木工事成果品 (INDEX_C.XML) 専用データローダー
+ */
+async function processConstructionIndex(
+  index: FastFileIndex,
+  folderName: string,
+  onProgress?: (status: string) => void
+): Promise<DeliveryDataset> {
+  onProgress?.('【土木工事】管理ファイル (INDEX_C.XML) を解析中...');
+
+  // 1. INDEX_C.XML の探索
+  let constructionInfo = {
+    deliveryType: 'construction' as const,
     constructionName: folderName,
     lineRiverName: '',
     clientName: 'GioV',
@@ -262,7 +546,7 @@ async function processIndex(
     chiefEngineer: '',
   };
 
-  let indexEntries = index.findXml('INDEX_C.XML', 'INDEX_D.XML', 'INDEX.XML', 'INDEX_M.XML');
+  let indexEntries = index.findXml('INDEX_C.XML', 'INDEX.XML', 'INDEX_M.XML');
   if (indexEntries.length === 0) {
     indexEntries = index.findXmlByPattern(/^index.*\.xml$/i);
   }
@@ -270,15 +554,13 @@ async function processIndex(
   let basePrefix = '';
 
   if (indexEntries.length > 0) {
-    // 複数の INDEX XML（工事写真側・成果品側など）を統合
     for (const entry of indexEntries) {
       try {
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseIndexXml(xmlText);
-        console.info(`INDEX XML (${entry.relativePath}) parsed:`, parsed);
+        console.info(`INDEX_C XML (${entry.relativePath}) parsed:`, parsed);
 
-        // より詳しい情報で更新
         if (parsed.constructionName && parsed.constructionName !== '（名称未設定工事）') {
           constructionInfo.constructionName = parsed.constructionName;
         }
@@ -297,15 +579,15 @@ async function processIndex(
           basePrefix = entry.relativePath.substring(0, lastSlash + 1).toLowerCase();
         }
       } catch (e) {
-        console.warn('INDEX XML parse failed:', e);
+        console.warn('INDEX_C XML parse failed:', e);
       }
     }
   }
 
-  // 2. PHOTO_C.XML / PHOTO.XML / PHOTO_D.XML の解析
-  onProgress?.('工事写真XML (PHOTO_C.XML / PHOTO.XML) を解析中...');
+  // 2. 工事写真 (PHOTO_C.XML) の解析
+  onProgress?.('【土木工事】写真XML (PHOTO_C.XML) を解析中...');
   let photos: PhotoItem[] = [];
-  let photoXmlEntries = index.findXml('PHOTO_C.XML', 'PHOTO.XML', 'PHOTO_D.XML', 'PHOTO_M.XML');
+  let photoXmlEntries = index.findXml('PHOTO_C.XML', 'PHOTO.XML', 'PHOTO_M.XML');
   if (photoXmlEntries.length === 0) {
     photoXmlEntries = index.findXmlByPattern(/^photo.*\.xml$/i);
   }
@@ -316,24 +598,21 @@ async function processIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parsePhotoXml(xmlText);
-        console.info(`PHOTO XML (${entry.relativePath}) parsed count:`, parsed.length);
+        console.info(`PHOTO_C XML (${entry.relativePath}) parsed count:`, parsed.length);
         photos.push(...parsed);
       } catch (e) {
-        console.warn('PHOTO XML parse failed:', e);
+        console.warn('PHOTO_C XML parse failed:', e);
       }
     }
 
-    // 重複IDの解決 & Blob URL O(1) 紐付け & ツリー用データのサニタイズ
     const idSet = new Set<string>();
-    const photoCount = photos.length;
-    for (let i = 0; i < photoCount; i++) {
+    for (let i = 0; i < photos.length; i++) {
       const p = photos[i];
       if (idSet.has(p.id)) {
         p.id = `${p.id}_${i + 1}`;
       }
       idSet.add(p.id);
 
-      // 工種や区分の空欄補完（ツリーが崩れないように）
       if (!p.workType || p.workType.trim() === '') {
         p.workType = p.type || '一般工種';
       }
@@ -344,7 +623,6 @@ async function processIndex(
       p.fileUrl = index.resolveBlobUrl(p.fileName, 'PHOTO', basePrefix);
     }
   } else {
-    // フォールバック: 画像ファイルから生成
     const imageItems = index.getImageItems();
     photos = imageItems.map((img, idx) => ({
       id: `IMG_${idx + 1}`,
@@ -362,25 +640,21 @@ async function processIndex(
     }));
   }
 
-  // 3. 報告書類XML (REPORT.XML, MEET.XML, PLAN.XML, OTHRS.XML) の解析
-  onProgress?.('報告書類XML (MEET.XML / PLAN.XML / OTHRS.XML / REPORT.XML) を解析中...');
+  // 3. 工事帳票 (MEET.XML, PLAN.XML, OTHRS.XML) の解析
+  onProgress?.('【土木工事】帳票XML (MEET.XML / PLAN.XML / OTHRS.XML) を解析中...');
   let reports: ReportItem[] = [];
   let reportXmlEntries = index.findXml(
-    'REPORT_C.XML', 
-    'REPORT.XML', 
-    'REPORT_D.XML', 
     'MEET_C.XML', 
     'MEET.XML', 
-    'MEET_D.XML', 
     'PLAN_C.XML', 
     'PLAN.XML', 
-    'PLAN_D.XML',
-    'OTHRS_C.XML',
+    'OTHRS_C.XML', 
     'OTHRS.XML',
-    'OTHRS_D.XML'
+    'REPORT_C.XML', 
+    'REPORT.XML'
   );
   if (reportXmlEntries.length === 0) {
-    reportXmlEntries = index.findXmlByPattern(/^(report|meet|plan|othrs).*\.xml$/i);
+    reportXmlEntries = index.findXmlByPattern(/^(meet|plan|othrs|report).*\.xml$/i);
   }
 
   if (reportXmlEntries.length > 0) {
@@ -389,16 +663,15 @@ async function processIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseReportXml(xmlText);
-        console.info(`REPORT XML (${entry.relativePath}) parsed count:`, parsed.length);
+        console.info(`REPORT_C XML (${entry.relativePath}) parsed count:`, parsed.length);
         reports.push(...parsed);
       } catch (e) {
-        console.warn('REPORT XML parse failed:', e);
+        console.warn('REPORT_C XML parse failed:', e);
       }
     }
 
     const idSet = new Set<string>();
-    const repCount = reports.length;
-    for (let i = 0; i < repCount; i++) {
+    for (let i = 0; i < reports.length; i++) {
       const r = reports[i];
       if (idSet.has(r.id)) {
         r.id = `${r.id}_${i + 1}`;
@@ -418,16 +691,14 @@ async function processIndex(
     }));
   }
 
-  // 4. DRAWING_C.XML / DRAWING.XML / DRAWINGF.XML / DRAWINGS.XML の解析
-  onProgress?.('完成図面XML (DRAWINGF.XML / DRAWING_C.XML) を解析中...');
+  // 4. 完成図面 (DRAWINGF.XML / DRAWING_C.XML) の解析
+  onProgress?.('【土木工事】完成図面XML (DRAWINGF.XML / DRAWING_C.XML) を解析中...');
   let drawings: DrawingItem[] = [];
   let drawingXmlEntries = index.findXml(
     'DRAWINGF.XML', 
     'DRAWINGS.XML', 
     'DRAWING_C.XML', 
-    'DRAWING.XML', 
-    'DRAWING_D.XML',
-    'DRAWING_M.XML'
+    'DRAWING.XML'
   );
   if (drawingXmlEntries.length === 0) {
     drawingXmlEntries = index.findXmlByPattern(/^(drawing|draw).*\.xml$/i);
@@ -439,16 +710,15 @@ async function processIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseDrawingXml(xmlText);
-        console.info(`DRAWING XML (${entry.relativePath}) parsed count:`, parsed.length);
+        console.info(`DRAWING_C XML (${entry.relativePath}) parsed count:`, parsed.length);
         drawings.push(...parsed);
       } catch (e) {
-        console.warn('DRAWING XML parse failed:', e);
+        console.warn('DRAWING_C XML parse failed:', e);
       }
     }
 
     const idSet = new Set<string>();
-    const drwCount = drawings.length;
-    for (let i = 0; i < drwCount; i++) {
+    for (let i = 0; i < drawings.length; i++) {
       const d = drawings[i];
       if (idSet.has(d.id)) {
         d.id = `${d.id}_${i + 1}`;
@@ -468,9 +738,10 @@ async function processIndex(
     }));
   }
 
-  onProgress?.('解析完了！画面を描画しています...');
+  onProgress?.('【土木工事】解析完了！画面を描画しています...');
 
   return {
+    deliveryType: 'construction',
     constructionInfo,
     photos,
     reports,

@@ -133,7 +133,9 @@ function createMockDocDataUrl(docTitle: string, docNumber: string, contentLines:
  */
 export function getSampleHiroshimaDataset(): DeliveryDataset {
   return {
+    deliveryType: 'construction',
     constructionInfo: {
+      deliveryType: 'construction',
       constructionName: '一般国道487号 道路改良工事（交付金）',
       lineRiverName: '一般国道487号',
       clientName: 'GioV建設事務所',
