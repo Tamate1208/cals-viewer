@@ -293,10 +293,22 @@ export const App: React.FC = () => {
               inspectionRecords={inspectionRecords}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
-              onSelectIndex={() => setDocTab('index')}
-              onSelectReport={handleTreeSelectReport}
-              onSelectDrawing={handleTreeSelectDrawing}
-              onSelectPhoto={setSelectedPhotoId}
+              onSelectIndex={() => {
+                setDocTab('index');
+                setViewMode('doc-only');
+              }}
+              onSelectReport={(id) => {
+                handleTreeSelectReport(id);
+                setViewMode('doc-only');
+              }}
+              onSelectDrawing={(id) => {
+                handleTreeSelectDrawing(id);
+                setViewMode('doc-only');
+              }}
+              onSelectPhoto={(id) => {
+                setSelectedPhotoId(id);
+                setViewMode('photo-only');
+              }}
             />
 
             {/* メイン: 書類または写真の全画面ビュー（左右分離を完全廃止） */}
@@ -500,10 +512,23 @@ export const App: React.FC = () => {
                     isIndexSelected={docTab === 'index'}
                     inspectionRecords={inspectionRecords}
                     viewMode={subWindowMode}
-                    onSelectIndex={() => setDocTab('index')}
-                    onSelectReport={handleTreeSelectReport}
-                    onSelectDrawing={handleTreeSelectDrawing}
-                    onSelectPhoto={setSelectedPhotoId}
+                    onViewModeChange={(mode) => setSubWindowMode(mode)}
+                    onSelectIndex={() => {
+                      setDocTab('index');
+                      setSubWindowMode('doc-only');
+                    }}
+                    onSelectReport={(id) => {
+                      handleTreeSelectReport(id);
+                      setSubWindowMode('doc-only');
+                    }}
+                    onSelectDrawing={(id) => {
+                      handleTreeSelectDrawing(id);
+                      setSubWindowMode('doc-only');
+                    }}
+                    onSelectPhoto={(id) => {
+                      setSelectedPhotoId(id);
+                      setSubWindowMode('photo-only');
+                    }}
                   />
                   <div className="flex-1 flex overflow-hidden">
                     {subWindowMode === 'doc-only' ? (

@@ -142,14 +142,21 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
   }, [selectedPhotoId, photos, selectedCategory, selectedWorkType]);
 
   // 選択された写真が変わった時、その写真カードの位置へスムーズスクロール
+  // （別窓内でも動作するよう、scrollContainerRef の ownerDocument を参照）
   useEffect(() => {
-    if (selectedPhotoId) {
-      const el = document.getElementById(`photo-card-${selectedPhotoId}`);
+    if (!selectedPhotoId) return;
+
+    // DOMレンダリング及びフィルタ解除（全表示戻し）の反映を待って確実にスクロール
+    const timer = setTimeout(() => {
+      const doc = scrollContainerRef.current?.ownerDocument || document;
+      const el = doc.getElementById(`photo-card-${selectedPhotoId}`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
-    }
-  }, [selectedPhotoId]);
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [selectedPhotoId, sortedFilteredPhotos]);
 
   // ライトボックスが開いた時にEscキーで閉じる
   useEffect(() => {
