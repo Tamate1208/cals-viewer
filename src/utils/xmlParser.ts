@@ -84,7 +84,7 @@ export function parseIndexXml(xmlString: string): ConstructionInfo {
 }
 
 /**
- * PHOTO.XML のパース
+ * PHOTO_C.XML / PHOTO.XML のパース
  */
 export function parsePhotoXml(xmlString: string): PhotoItem[] {
   const doc = parseXmlString(xmlString);
@@ -93,19 +93,19 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
   const photoNodes = doc.querySelectorAll('photo_item, PHOTO_ITEM, photo, PHOTO');
 
   photoNodes.forEach((node, index) => {
-    // 直下に要素があるか
     const id = getElementText(node, 'photo_id', 'PHOTO_ID', 'id', 'ID') || `PHOTO_${index + 1}`;
-    const title = getElementText(node, 'photo_title', 'PHOTO_TITLE', 'title', 'TITLE') || `写真 ${index + 1}`;
+    const title = getElementText(node, 'photo_title', 'PHOTO_TITLE', 'title', 'TITLE', 'caption', 'photo_name') || `写真 ${index + 1}`;
     const category = getElementText(node, 'photo_category', 'PHOTO_CATEGORY', 'category', 'CATEGORY') || '施工中';
-    const type = getElementText(node, 'photo_type', 'PHOTO_TYPE', 'type', 'TYPE') || '出来形管理';
-    const workType = getElementText(node, 'work_type', 'WORK_TYPE') || '一般工種';
-    const workKind = getElementText(node, 'work_kind', 'WORK_KIND') || '';
-    const workDetail = getElementText(node, 'work_detail', 'WORK_DETAIL') || '';
-    const date = getElementText(node, 'photo_date', 'PHOTO_DATE', 'date', 'DATE', 'shooting_date') || '';
+    const type = getElementText(node, 'photo_class', 'PHOTO_CLASS', 'photo_type', 'PHOTO_TYPE', 'type', 'TYPE', 'class', 'CLASS') || '出来形管理';
+    const workType = getElementText(node, 'work_type', 'WORK_TYPE', 'worktype', 'kou_syu') || '一般工種';
+    const workKind = getElementText(node, 'work_kind', 'WORK_KIND', 'workkind', 'syu_betu') || '';
+    const workDetail = getElementText(node, 'work_detail', 'WORK_DETAIL', 'workdetail', 'sai_betu') || '';
+    const date = getElementText(node, 'photo_date', 'PHOTO_DATE', 'date', 'DATE', 'shooting_date', 'shooting_datetime') || '';
     const time = getElementText(node, 'photo_time', 'PHOTO_TIME', 'time', 'TIME') || '';
-    const station = getElementText(node, 'station', 'STATION', 'measure_point', 'MEASURE_POINT') || '';
+    const station = getElementText(node, 'station', 'STATION', 'photo_place', 'PHOTO_PLACE', 'measure_point', 'place', 'location') || '';
     const remarks = getElementText(node, 'remarks', 'REMARKS', 'memo', 'MEMO', 'description') || '';
-    const fileName = getElementText(node, 'file_name', 'FILE_NAME', 'filename', 'FILENAME') || '';
+    // 正式タグ photo_file_name を最優先
+    const fileName = getElementText(node, 'photo_file_name', 'PHOTO_FILE_NAME', 'photo_filename', 'file_name', 'FILE_NAME', 'filename', 'FILENAME') || '';
 
     // 電子黒板情報や設計値・実測値の抽出
     const blackboardItems: BlackboardItem[] = [];
@@ -113,9 +113,9 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
     // 測点
     if (station) blackboardItems.push({ name: '測点', value: station });
     // 設計値・実測値のタグがある場合
-    const designVal = getElementText(node, 'design_value', 'DESIGN_VALUE', 'plan_val');
+    const designVal = getElementText(node, 'design_value', 'DESIGN_VALUE', 'plan_val', 'plan_value');
     if (designVal) blackboardItems.push({ name: '設計値', value: designVal });
-    const measuredVal = getElementText(node, 'measured_value', 'MEASURED_VALUE', 'actual_val');
+    const measuredVal = getElementText(node, 'measured_value', 'MEASURED_VALUE', 'actual_val', 'actual_value');
     if (measuredVal) blackboardItems.push({ name: '実測値', value: measuredVal });
     
     // 子要素の黒板情報やテーブル情報
@@ -152,7 +152,7 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
 }
 
 /**
- * REPORT.XML のパース
+ * REPORT_C.XML / REPORT.XML のパース
  */
 export function parseReportXml(xmlString: string): ReportItem[] {
   const doc = parseXmlString(xmlString);
@@ -162,10 +162,10 @@ export function parseReportXml(xmlString: string): ReportItem[] {
 
   reportNodes.forEach((node, index) => {
     const id = getElementText(node, 'report_id', 'REPORT_ID', 'id', 'ID') || `REP_${index + 1}`;
-    const title = getElementText(node, 'report_title', 'REPORT_TITLE', 'title', 'TITLE') || `報告書 ${index + 1}`;
-    const type = getElementText(node, 'report_type', 'REPORT_TYPE', 'type', 'TYPE') || '書類';
-    const fileName = getElementText(node, 'file_name', 'FILE_NAME', 'filename', 'FILENAME') || '';
-    const createDate = getElementText(node, 'create_date', 'CREATE_DATE', 'date', 'DATE') || '';
+    const title = getElementText(node, 'report_title', 'REPORT_TITLE', 'title', 'TITLE', 'name') || `報告書 ${index + 1}`;
+    const type = getElementText(node, 'report_type', 'REPORT_TYPE', 'type', 'TYPE', 'report_class', 'class') || '書類';
+    const fileName = getElementText(node, 'report_file_name', 'REPORT_FILE_NAME', 'file_name', 'FILE_NAME', 'filename', 'FILENAME') || '';
+    const createDate = getElementText(node, 'create_date', 'CREATE_DATE', 'date', 'DATE', 'report_date') || '';
     const summary = getElementText(node, 'summary', 'SUMMARY', 'remarks', 'REMARKS') || '';
 
     if (fileName || title) {
@@ -185,7 +185,7 @@ export function parseReportXml(xmlString: string): ReportItem[] {
 }
 
 /**
- * DRAWING.XML のパース
+ * DRAWING_C.XML / DRAWING.XML のパース
  */
 export function parseDrawingXml(xmlString: string): DrawingItem[] {
   const doc = parseXmlString(xmlString);
@@ -195,10 +195,10 @@ export function parseDrawingXml(xmlString: string): DrawingItem[] {
 
   drawingNodes.forEach((node, index) => {
     const id = getElementText(node, 'drawing_id', 'DRAWING_ID', 'id', 'ID') || `DRW_${index + 1}`;
-    const title = getElementText(node, 'drawing_title', 'DRAWING_TITLE', 'title', 'TITLE') || `図面 ${index + 1}`;
-    const type = getElementText(node, 'drawing_type', 'DRAWING_TYPE', 'type', 'TYPE') || '完成図';
-    const fileName = getElementText(node, 'file_name', 'FILE_NAME', 'filename', 'FILENAME') || '';
-    const cadFileName = getElementText(node, 'cad_file_name', 'CAD_FILE_NAME', 'sxf_file') || '';
+    const title = getElementText(node, 'drawing_title', 'DRAWING_TITLE', 'title', 'TITLE', 'name') || `図面 ${index + 1}`;
+    const type = getElementText(node, 'drawing_type', 'DRAWING_TYPE', 'type', 'TYPE', 'drawing_class') || '完成図';
+    const fileName = getElementText(node, 'drawing_file_name', 'DRAWING_FILE_NAME', 'file_name', 'FILE_NAME', 'filename', 'drawing_file') || '';
+    const cadFileName = getElementText(node, 'cad_file_name', 'CAD_FILE_NAME', 'cad_filename', 'sxf_file', 'sxf_file_name') || '';
     const scale = getElementText(node, 'scale', 'SCALE') || '';
 
     if (fileName || cadFileName || title) {
@@ -216,3 +216,4 @@ export function parseDrawingXml(xmlString: string): DrawingItem[] {
 
   return items;
 }
+
