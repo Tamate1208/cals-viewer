@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import type { DeliveryDataset, InspectionRecord } from './types/cals';
 
 import { Header } from './components/Header';
@@ -238,6 +238,11 @@ export const App: React.FC = () => {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // 別窓を閉じるハンドラ（参照を固定）
+  const handleCloseSubWindow = useCallback(() => {
+    setSubWindowMode(null);
+  }, []);
+
   // 別窓（サブウィンドウ）の開閉トグル
   const handleToggleSubWindow = () => {
     if (subWindowMode) {
@@ -451,7 +456,7 @@ export const App: React.FC = () => {
                   ? (dataset.constructionInfo.deliveryType === 'consignment' ? '業務写真ビューア' : '工事写真ビューア')
                   : '書類・図面ビューア'
               }`}
-              onClose={() => setSubWindowMode(null)}
+              onClose={handleCloseSubWindow}
               width={1280}
               height={850}
             >

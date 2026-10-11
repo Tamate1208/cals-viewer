@@ -22,7 +22,21 @@ export const SubWindowPortal: React.FC<SubWindowPortalProps> = ({
 }) => {
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
   const externalWindowRef = useRef<Window | null>(null);
+  const onCloseRef = useRef(onClose);
 
+  // onCloseが更新されても最新の関数を参照できるように保持
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // ウィンドウのタイトル更新（ウィンドウ再生成は行わない）
+  useEffect(() => {
+    if (externalWindowRef.current && !externalWindowRef.current.closed) {
+      externalWindowRef.current.document.title = title;
+    }
+  }, [title]);
+
+  // ウィンドウの初期化（コンポーネントのマウント時に1度だけ実行）
   useEffect(() => {
     // 画面中央または少しずらした位置にウィンドウを配置
     const left = Math.max(0, (window.screenLeft ?? window.screenX) + 60);
@@ -33,7 +47,7 @@ export const SubWindowPortal: React.FC<SubWindowPortalProps> = ({
 
     if (!subWindow) {
       alert('ポップアップウィンドウがブラウザにブロックされました。\nブラウザの設定でポップアップを「許可」してください。');
-      onClose();
+      onCloseRef.current();
       return;
     }
 
@@ -55,7 +69,7 @@ export const SubWindowPortal: React.FC<SubWindowPortalProps> = ({
 
     // サブウィンドウが閉じられた際のクリーンアップ
     const handleUnload = () => {
-      onClose();
+      onCloseRef.current();
     };
     subWindow.addEventListener('beforeunload', handleUnload);
 
@@ -65,7 +79,8 @@ export const SubWindowPortal: React.FC<SubWindowPortalProps> = ({
         subWindow.close();
       }
     };
-  }, [title, onClose, width, height]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!containerEl) return null;
 
