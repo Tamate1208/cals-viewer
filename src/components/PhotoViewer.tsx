@@ -13,7 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Printer,
-  Grid
+  Grid,
+  ArrowUpDown
 } from 'lucide-react';
 import type { InspectionRecord, PhotoItem } from '../types/cals';
 
@@ -39,6 +40,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [photosPerPage, setPhotosPerPage] = useState<number>(3); // 1, 2, 3, 4 枚表示 (デフォルト3枚綴じ)
   const [page, setPage] = useState<number>(0);
+  const [sortOrder, setSortOrder] = useState<'date-asc' | 'date-desc' | 'station' | 'serial'>('date-asc');
 
   // サムネイルレール用 Ref & ドラッグ状態
   const thumbnailRailRef = useRef<HTMLDivElement>(null);
@@ -91,14 +93,49 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
     });
   }, [photos, selectedCategory, selectedWorkType, searchQuery]);
 
+  // 並び順ソート（撮影日時昇順・降順、測点順、納品連番順）
+  const sortedFilteredPhotos = useMemo(() => {
+    const list = [...filteredPhotos];
+    switch (sortOrder) {
+      case 'date-asc':
+        return list.sort((a, b) => {
+          const d1 = (a.date || '') + (a.time || '');
+          const d2 = (b.date || '') + (b.time || '');
+          if (d1 !== d2) return d1.localeCompare(d2);
+          return (a.station || '').localeCompare(b.station || '');
+        });
+      case 'date-desc':
+        return list.sort((a, b) => {
+          const d1 = (a.date || '') + (a.time || '');
+          const d2 = (b.date || '') + (b.time || '');
+          if (d1 !== d2) return d2.localeCompare(d1);
+          return (b.station || '').localeCompare(a.station || '');
+        });
+      case 'station':
+        return list.sort((a, b) => {
+          const s1 = a.station || '';
+          const s2 = b.station || '';
+          if (s1 !== s2) {
+            if (!s1) return 1;
+            if (!s2) return -1;
+            return s1.localeCompare(s2, undefined, { numeric: true, sensitivity: 'base' });
+          }
+          return ((a.date || '') + (a.time || '')).localeCompare((b.date || '') + (b.time || ''));
+        });
+      case 'serial':
+      default:
+        return list;
+    }
+  }, [filteredPhotos, sortOrder]);
+
   // 現在選択中の写真
-  const currentPhoto = photos.find(p => p.id === selectedPhotoId) || filteredPhotos[0] || photos[0];
+  const currentPhoto = photos.find(p => p.id === selectedPhotoId) || sortedFilteredPhotos[0] || photos[0];
   const currentRecord = currentPhoto ? inspectionRecords[currentPhoto.id] : undefined;
 
   // 選択された写真が変わった場合、その写真が含まれるページに自動追従
   useEffect(() => {
     if (selectedPhotoId && photosPerPage > 1) {
-      const idx = filteredPhotos.findIndex(p => p.id === selectedPhotoId);
+      const idx = sortedFilteredPhotos.findIndex(p => p.id === selectedPhotoId);
       if (idx >= 0) {
         const targetPage = Math.floor(idx / photosPerPage);
         if (targetPage !== page) {
@@ -106,7 +143,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
         }
       }
     }
-  }, [selectedPhotoId, filteredPhotos, photosPerPage]);
+  }, [selectedPhotoId, sortedFilteredPhotos, photosPerPage]);
 
   // 選択された写真が変わった場合、現在のフィルターに含まれていなければフィルターをリセットして表示を保証
   useEffect(() => {
@@ -132,7 +169,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
         block: 'nearest',
       });
     }
-  }, [selectedPhotoId, photosPerPage, filteredPhotos]);
+  }, [selectedPhotoId, photosPerPage, sortedFilteredPhotos]);
 
   // サムネイルレールのマウスホイール横スクロール変換
   const handleRailWheel = (e: React.WheelEvent) => {
@@ -177,17 +214,17 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
   // フィルター変更時にページを0にリセット
   useEffect(() => {
     setPage(0);
-  }, [selectedCategory, selectedWorkType, searchQuery, photosPerPage]);
+  }, [selectedCategory, selectedWorkType, searchQuery, photosPerPage, sortOrder]);
 
   // ページネーション用計算
-  const totalPages = Math.ceil(filteredPhotos.length / photosPerPage) || 1;
+  const totalPages = Math.ceil(sortedFilteredPhotos.length / photosPerPage) || 1;
   const currentPagedPhotos = useMemo(() => {
     if (photosPerPage === 1) {
       return currentPhoto ? [currentPhoto] : [];
     }
     const start = page * photosPerPage;
-    return filteredPhotos.slice(start, start + photosPerPage);
-  }, [filteredPhotos, page, photosPerPage, currentPhoto]);
+    return sortedFilteredPhotos.slice(start, start + photosPerPage);
+  }, [sortedFilteredPhotos, page, photosPerPage, currentPhoto]);
 
   // 検査ステータス更新
   const handleSetStatus = (photo: PhotoItem, status: 'ok' | 'issue') => {
@@ -269,8 +306,24 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
           ))}
         </div>
 
-        {/* 工種セレクト ＆ 検索 */}
+        {/* ソートセレクター ＆ 工種セレクト ＆ 検索 */}
         <div className="flex items-center gap-2 w-full sm:w-auto">
+          {/* 並び順ソートセレクター */}
+          <div className="flex items-center gap-1 bg-slate-900 border border-slate-700/80 rounded px-2 py-1 text-xs shrink-0">
+            <ArrowUpDown className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <select
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value as any)}
+              className="bg-transparent text-slate-200 text-xs font-medium focus:outline-none cursor-pointer"
+              title="写真の表示順序を変更"
+            >
+              <option value="date-asc" className="bg-slate-900 text-slate-200">撮影日時 (古い順・施工順)</option>
+              <option value="date-desc" className="bg-slate-900 text-slate-200">撮影日時 (新しい順)</option>
+              <option value="station" className="bg-slate-900 text-slate-200">測点順</option>
+              <option value="serial" className="bg-slate-900 text-slate-200">納品連番順</option>
+            </select>
+          </div>
+
           {workTypes.length > 0 && (
             <select
               value={selectedWorkType}
@@ -465,7 +518,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
             <div className="flex items-center justify-between px-3 py-1 bg-slate-950 text-[11px] text-slate-400 border-b border-slate-850">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-slate-300">
-                  写真一覧 ({filteredPhotos.length}件)
+                  写真一覧 ({sortedFilteredPhotos.length}件)
                 </span>
                 <span className="text-[10px] text-slate-500 hidden sm:inline">
                   • 🖱️ マウスホイール上下またはドラッグで左右スクロール
@@ -501,7 +554,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
                 isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
               }`}
             >
-              {filteredPhotos.map((photo) => {
+              {sortedFilteredPhotos.map((photo) => {
                 const isSelected = photo.id === currentPhoto?.id;
                 const rec = inspectionRecords[photo.id];
                 return (
@@ -565,7 +618,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
               <span className="font-semibold text-blue-400">工事写真台帳 ({photosPerPage}枚綴じ)</span>
               <span className="text-slate-500">|</span>
               <span>
-                {filteredPhotos.length === 0 ? '0' : page * photosPerPage + 1} - {Math.min((page + 1) * photosPerPage, filteredPhotos.length)} / 全 {filteredPhotos.length} 枚
+                {sortedFilteredPhotos.length === 0 ? '0' : page * photosPerPage + 1} - {Math.min((page + 1) * photosPerPage, sortedFilteredPhotos.length)} / 全 {sortedFilteredPhotos.length} 枚
               </span>
               <span className="text-slate-500">（ページ {page + 1} / {totalPages}）</span>
             </div>

@@ -48,22 +48,106 @@ export function decodeXmlBuffer(buffer: ArrayBuffer): string {
 }
 
 /**
- * 日付文字列（YYYYMMDD, YYYY/MM/DD, YYYY-MM-DD 等）を標準的な YYYY-MM-DD に正規化
+ * デジタル写真管理情報基準（国交省・各自治体共通）の標準写真区分
+ */
+export const PHOTO_STANDARD_CATEGORIES = [
+  '着手前及び完成写真',
+  '施工状況写真',
+  '安全管理写真',
+  '使用材料写真',
+  '出来形管理写真',
+  '品質管理写真',
+  '災害写真',
+  'その他'
+] as const;
+
+/**
+ * 写真区分が基準外・未入力・固定値（「一般」「工事」等）の場合に、
+ * タイトル、工種、備考、黒板テキストから文脈キーワードを解析して基準の7大区分へ自動推定・正規化
+ */
+export function inferPhotoCategory(rawCategory: string | undefined, contextText: string): string {
+  const cat = (rawCategory || '').trim();
+
+  // すでに標準区分のいずれかに完全一致または包含している場合
+  for (const std of PHOTO_STANDARD_CATEGORIES) {
+    if (cat === std || (cat.length >= 4 && (std.includes(cat) || cat.includes(std)))) {
+      return std;
+    }
+  }
+
+  // 略称・異表記のダイレクトマッピング
+  if (/着手前?|着工前?|完成|竣工|全景/.test(cat)) return '着手前及び完成写真';
+  if (/施工(状況|中)?|工程|作業状況/.test(cat)) return '施工状況写真';
+  if (/出来形(管理)?|検測|寸法|高低差/.test(cat)) return '出来形管理写真';
+  if (/品質(管理)?|試験|スランプ|空気量|強度|テスト/.test(cat)) return '品質管理写真';
+  if (/(使用)?材料(管理|検収)?|ミルシート|搬入/.test(cat)) return '使用材料写真';
+  if (/安全(管理)?|朝礼|KY|パトロール|標識/.test(cat)) return '安全管理写真';
+  if (/災害|被災|応急/.test(cat)) return '災害写真';
+
+  // rawCategory が「工事」「一般」「写真」「未分類」等の無意味な値、または空の場合、前後の文脈から推定
+  const ctx = `${cat} ${contextText}`.toLowerCase();
+
+  if (/着手前?|着工前?|完成|竣工|全景|全景写真/.test(ctx)) return '着手前及び完成写真';
+  if (/出来形|出来高|検測|実測|測定|寸法|幅員|延長|厚さ|高低差|かぶり|ピッチ/.test(ctx)) return '出来形管理写真';
+  if (/品質|試験|スランプ|空気量|強度|圧縮強度|供試体|配合|温度測定|密度/.test(ctx)) return '品質管理写真';
+  if (/材料|検収|ミルシート|規格証明|受入|搬入|材料確認/.test(ctx)) return '使用材料写真';
+  if (/安全|朝礼|ky|危険予知|パトロール|保安|安全帯|ヘルメット|標識|消火/.test(ctx)) return '安全管理写真';
+  if (/災害|被災|応急|復旧|崩壊/.test(ctx)) return '災害写真';
+
+  // 推定できなかった場合は「施工状況写真」をデフォルトとする
+  return '施工状況写真';
+}
+
+/**
+ * 日付文字列（YYYYMMDD, YYYY/MM/DD, YYYY-MM-DD, 和暦「令和6年5月1日」等）を標準的な YYYY-MM-DD に正規化
  */
 export function normalizeCalsDate(rawDate?: string): string {
   if (!rawDate) return '';
-  const trimmed = rawDate.trim();
-  // YYYYMMDD
+  let trimmed = rawDate.trim();
+
+  // 1. 和暦対応 (例: 令和6年5月10日, 令和06/05/10, R6.5.10, 平成30年10月1日, H30-10-01)
+  const warekiRegex = /^(令和|平成|R|H)\s*(\d{1,2})[年/.-]\s*(\d{1,2})[月/.-]\s*(\d{1,2})日?$/i;
+  const warekiMatch = trimmed.match(warekiRegex);
+  if (warekiMatch) {
+    const era = warekiMatch[1].toUpperCase();
+    const gengoYear = parseInt(warekiMatch[2], 10);
+    const m = warekiMatch[3].padStart(2, '0');
+    const d = warekiMatch[4].padStart(2, '0');
+    let seirekiYear = 2000;
+    if (era.startsWith('令') || era === 'R') {
+      seirekiYear = 2018 + gengoYear;
+    } else if (era.startsWith('平') || era === 'H') {
+      seirekiYear = 1988 + gengoYear;
+    }
+    return `${seirekiYear}-${m}-${d}`;
+  }
+
+  // 2. 年月日表記 (例: 2024年5月10日)
+  const jpDateRegex = /^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?$/;
+  const jpMatch = trimmed.match(jpDateRegex);
+  if (jpMatch) {
+    return `${jpMatch[1]}-${jpMatch[2].padStart(2, '0')}-${jpMatch[3].padStart(2, '0')}`;
+  }
+
+  // 3. YYYYMMDD (8桁数値)
   if (/^\d{8}$/.test(trimmed)) {
     return `${trimmed.substring(0, 4)}-${trimmed.substring(4, 6)}-${trimmed.substring(6, 8)}`;
   }
-  // YYYY/MM/DD or YYYY.MM.DD
-  if (/^\d{4}[/.]\d{1,2}[/.]\d{1,2}$/.test(trimmed)) {
-    const parts = trimmed.split(/[/.]/);
+
+  // 4. YYYY/MM/DD or YYYY.MM.DD or YYYY-MM-DD
+  if (/^\d{4}[/.-]\d{1,2}[/.-]\d{1,2}$/.test(trimmed)) {
+    const parts = trimmed.split(/[/.-]/);
     const m = parts[1].padStart(2, '0');
     const d = parts[2].padStart(2, '0');
     return `${parts[0]}-${m}-${d}`;
   }
+
+  // 5. 日付と時刻が結合している場合 (例: 2024-05-10T14:30:00, 2024/05/10 14:30)
+  const dtMatch = trimmed.match(/^(\d{4}[/.-]\d{1,2}[/.-]\d{1,2})[T\s]/);
+  if (dtMatch) {
+    return normalizeCalsDate(dtMatch[1]);
+  }
+
   return trimmed;
 }
 
@@ -313,7 +397,7 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
     ) || (fileName ? fileName.replace(/\.[^.]+$/, '') : `写真 ${index + 1}`);
 
     // 4. 写真区分 (着手前及び完成写真 / 施工状況写真 / 出来形管理写真 / 安全管理写真 等)
-    const category = getElementText(
+    const rawCategory = getElementText(
       node, 
       '写真区分', 
       '写真-大分類', 
@@ -321,7 +405,7 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       'category', 
       'photo_kbn', 
       'kbn'
-    ) || '施工状況写真';
+    );
 
     // 5. 写真種別
     const type = getElementText(
@@ -336,7 +420,7 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
     ) || '工事写真';
 
     // 6. 工種 (国交省標準: <工種> / <kou_syu>)
-    const workType = getElementText(
+    let workType = getElementText(
       node, 
       '工種', 
       'kou_syu', 
@@ -344,20 +428,20 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       'work_type', 
       'worktype', 
       'work_category'
-    ) || category || '一般工種';
+    );
 
     // 7. 種別 (国交省標準: <種別> / <syu_betu>)
-    const workKind = getElementText(
+    let workKind = getElementText(
       node, 
       '種別', 
       'syu_betu', 
       'syubetu', 
       'work_kind', 
       'workkind'
-    ) || '';
+    );
 
     // 8. 細別 (国交省標準: <細別> / <sai_betu>)
-    const workDetail = getElementText(
+    let workDetail = getElementText(
       node, 
       '細別', 
       '細別2', 
@@ -365,7 +449,7 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       'saibetu', 
       'work_detail', 
       'workdetail'
-    ) || '';
+    );
 
     // 9. 撮影日・時刻
     const rawDate = getElementText(node, '撮影年月日', '撮影日', 'photo_date', 'date', 'shooting_date', 'shot_date');
@@ -374,7 +458,7 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
     const time = normalizeCalsTime(rawTime);
 
     // 10. 測点・撮影箇所 (国交省標準: <撮影箇所> / <測点> / <photo_place>)
-    const station = getElementText(
+    let station = getElementText(
       node, 
       '撮影箇所', 
       '測点', 
@@ -384,7 +468,7 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       'sokuten', 
       'place', 
       'location'
-    ) || '';
+    );
 
     // 11. 備考・施工管理値・予備
     const remarks = getElementText(
@@ -397,31 +481,24 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       'memo', 
       'description', 
       'note'
-    ) || '';
+    );
 
     // 12. 電子黒板情報（小黒板メタデータ、設計値、実測値等の網羅的抽出）
     const blackboardItems: BlackboardItem[] = [];
 
-    if (workType) blackboardItems.push({ name: '工種', value: workType });
-    if (workKind) blackboardItems.push({ name: '種別', value: workKind });
-    if (workDetail) blackboardItems.push({ name: '細別', value: workDetail });
-    if (station) blackboardItems.push({ name: '測点', value: station });
-    if (title && title !== fileName) blackboardItems.push({ name: '項目', value: title });
-    if (remarks) blackboardItems.push({ name: '備考', value: remarks });
-
     // 設計値・実測値・許容差・測定項目の抽出
     const measureItem = getElementText(node, '測定項目', 'measure_item', 'measurement_item', 'koumoku');
-    if (measureItem && !blackboardItems.some(i => i.name === '測定項目')) {
+    if (measureItem) {
       blackboardItems.push({ name: '測定項目', value: measureItem });
     }
 
     const designVal = getElementText(node, '設計値', 'design_value', 'plan_val', 'plan_value', 'sekkei_ti');
-    if (designVal && !blackboardItems.some(i => i.name === '設計値')) {
+    if (designVal) {
       blackboardItems.push({ name: '設計値', value: designVal });
     }
 
     const measuredVal = getElementText(node, '実測値', 'measured_value', 'actual_val', 'actual_value', 'jissoku_ti');
-    if (measuredVal && !blackboardItems.some(i => i.name === '実測値')) {
+    if (measuredVal) {
       blackboardItems.push({ name: '実測値', value: measuredVal });
     }
 
@@ -444,6 +521,58 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
         }
       }
     });
+
+    // ==================== 電子黒板・タイトルからの情報救済フォールバック ====================
+    // 工種が空または無意味（「工事」「一般工種」等）の場合、黒板から救出
+    const isGenericWork = (w: string) => !w || ['工事', '一般工種', '工事写真', '本工事', '一般', '写真'].includes(w);
+    if (isGenericWork(workType)) {
+      const bbWork = blackboardItems.find(i => ['工種', '工事名', '工種名', '工事件名'].includes(i.name))?.value;
+      if (bbWork && !isGenericWork(bbWork)) {
+        workType = bbWork;
+      } else if (workKind && !isGenericWork(workKind)) {
+        workType = workKind;
+      }
+    }
+
+    // 種別が空の場合、黒板から救出
+    if (!workKind) {
+      const bbKind = blackboardItems.find(i => ['種別', '構造', '工種細目'].includes(i.name))?.value;
+      if (bbKind) workKind = bbKind;
+    }
+
+    // 細別が空の場合、黒板から救出
+    if (!workDetail) {
+      const bbDetail = blackboardItems.find(i => ['細別', '作業内容', '施工内容'].includes(i.name))?.value;
+      if (bbDetail) workDetail = bbDetail;
+    }
+
+    // 測点が空の場合、黒板またはタイトル・備考から救出
+    if (!station) {
+      const bbStation = blackboardItems.find(i => ['測点', '位置', '撮影箇所', '施工位置', '地点'].includes(i.name))?.value;
+      if (bbStation) {
+        station = bbStation;
+      } else {
+        // タイトルや備考から NO.XX などの測点表記を抽出
+        const stationMatch = `${title} ${remarks}`.match(/(NO\.?\s*\d+(?:\+\d+(?:\.\d+)?)?|No\.?\s*\d+(?:\+\d+(?:\.\d+)?)?|\d+k\d+m?)/i);
+        if (stationMatch) {
+          station = stationMatch[0].trim();
+        }
+      }
+    }
+
+    // 救出後の工種・種別・細別・測点を小黒板リストに整合追加
+    if (workType && !blackboardItems.some(i => i.name === '工種')) blackboardItems.unshift({ name: '工種', value: workType });
+    if (workKind && !blackboardItems.some(i => i.name === '種別')) blackboardItems.push({ name: '種別', value: workKind });
+    if (workDetail && !blackboardItems.some(i => i.name === '細別')) blackboardItems.push({ name: '細別', value: workDetail });
+    if (station && !blackboardItems.some(i => i.name === '測点')) blackboardItems.push({ name: '測点', value: station });
+    if (title && title !== fileName && !blackboardItems.some(i => i.name === '項目')) blackboardItems.push({ name: '項目', value: title });
+    if (remarks && !blackboardItems.some(i => i.name === '備考')) blackboardItems.push({ name: '備考', value: remarks });
+
+    // 写真区分の自動推定・正規化（未入力や「工事」固定文字を、タイトル・備考・黒板テキストの文脈から救済）
+    const contextText = `${title} ${remarks} ${workType} ${workKind} ${workDetail} ${blackboardItems.map(b => `${b.name}:${b.value}`).join(' ')}`;
+    const category = inferPhotoCategory(rawCategory, contextText);
+
+    if (!workType) workType = category || '本工事';
 
     if (fileName || title) {
       items.push({
