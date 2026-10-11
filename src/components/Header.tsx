@@ -4,6 +4,7 @@ import type { ConstructionInfo, InspectionRecord } from '../types/cals';
 import { 
   Building2, 
   Calendar, 
+  CheckCheck,
   ExternalLink,
   FileSpreadsheet, 
   FileText, 
@@ -25,6 +26,7 @@ interface HeaderProps {
   hasPhotos?: boolean;
   onToggleSubWindow?: () => void;
   isSubWindowOpen?: boolean;
+  onBulkMarkOk?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -39,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   hasPhotos = true,
   onToggleSubWindow,
   isSubWindowOpen = false,
+  onBulkMarkOk,
 }) => {
   // 検査進捗計算
   const records = Object.values(inspectionRecords);
@@ -188,7 +191,7 @@ export const Header: React.FC<HeaderProps> = ({
             {issueCount > 0 && <span className="text-rose-400 ml-1">▲ 要確認: {issueCount}</span>}
           </div>
           {/* プログレスバー */}
-          <div className="w-24 sm:w-32 h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
+          <div className="w-20 sm:w-28 h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
             <div 
               className="bg-emerald-500 h-full transition-all duration-300"
               style={{ width: `${totalItemsCount > 0 ? (okCount / totalItemsCount) * 100 : 0}%` }}
@@ -198,6 +201,18 @@ export const Header: React.FC<HeaderProps> = ({
               style={{ width: `${totalItemsCount > 0 ? (issueCount / totalItemsCount) * 100 : 0}%` }}
             />
           </div>
+
+          {/* 未確認を一括「適」にするボタン */}
+          {onBulkMarkOk && inspectedCount < totalItemsCount && (
+            <button
+              onClick={onBulkMarkOk}
+              className="flex items-center gap-1 px-2 py-0.5 bg-emerald-950/70 hover:bg-emerald-800/90 text-emerald-300 hover:text-white border border-emerald-600/60 rounded text-[11px] font-medium transition active:scale-95 shadow-sm ml-1"
+              title="指摘（要確認）以外の未確認アイテムを一括で「適」にします"
+            >
+              <CheckCheck className="w-3 h-3 text-emerald-400" />
+              <span>未確認を一括適 ✓</span>
+            </button>
+          )}
         </div>
       </div>
     </header>

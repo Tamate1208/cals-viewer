@@ -1,35 +1,87 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { 
   X, 
   Download, 
   Printer, 
   CheckCircle2, 
   AlertCircle, 
-  ShieldCheck 
+  ShieldCheck,
+  CheckCheck,
+  FileJson,
+  Upload,
+  RotateCcw
 } from 'lucide-react';
 import type { ConstructionInfo, InspectionRecord } from '../types/cals';
-
 
 interface InspectionReportViewProps {
   constructionInfo: ConstructionInfo;
   inspectionRecords: Record<string, InspectionRecord>;
   onClose: () => void;
+  totalItemsCount?: number;
+  onBulkMarkOk?: () => void;
+  onResetInspection?: () => void;
+  onImportBackup?: (records: Record<string, InspectionRecord>) => void;
 }
 
 export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
   constructionInfo,
   inspectionRecords,
   onClose,
+  totalItemsCount = 0,
+  onBulkMarkOk,
+  onResetInspection,
+  onImportBackup,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const records = Object.values(inspectionRecords);
   const okRecords = records.filter(r => r.status === 'ok');
   const issueRecords = records.filter(r => r.status === 'issue');
+  const uninspectedCount = totalItemsCount > records.length ? totalItemsCount - records.length : 0;
+
+  // JSONバックアップ保存（エクスポート）
+  const handleExportJson = () => {
+    const jsonStr = JSON.stringify(inspectionRecords, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `検査記録バックアップ_${constructionInfo.constructionName}_${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // JSONバックアップ読込（インポート）
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        if (typeof parsed === 'object' && parsed !== null) {
+          if (onImportBackup) {
+            onImportBackup(parsed);
+          }
+        } else {
+          alert('有効な検査記録JSONファイルではありません。');
+        }
+      } catch (e) {
+        console.error('JSON parse error:', e);
+        alert('JSONファイルの読み込みに失敗しました。');
+      }
+    };
+    reader.readAsText(file);
+    // 次回同一ファイルでも発火するようにリセット
+    e.target.value = '';
+  };
 
   // CSVダウンロード処理 (UTF-8 BOM付き)
   const handleExportCsv = () => {
+    const photoLabel = constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真';
     const headers = ['対象種別', '対象タイトル', '検査結果', '指摘事項・確認メモ', '確認日時'];
     const rows = records.map(r => [
-      r.targetType === 'photo' ? '工事写真' : r.targetType === 'report' ? '報告書類' : '完成図面',
+      r.targetType === 'photo' ? photoLabel : r.targetType === 'report' ? '報告書類' : '完成図面',
       `"${r.targetTitle.replace(/"/g, '""')}"`,
       r.status === 'ok' ? '適 (確認済)' : r.status === 'issue' ? '要確認 (指摘)' : '未確認',
       `"${(r.notes || '').replace(/"/g, '""')}"`,
@@ -62,10 +114,10 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white print:text-black">
-                土木公共工事 電子納品検査調書・指摘事項一覧
+                {constructionInfo.deliveryType === 'consignment' ? '業務委託成果' : '土木公共工事'} 電子納品検査調書・指摘事項一覧
               </h2>
               <div className="text-xs text-slate-400 print:text-gray-600">
-                工事名: {constructionInfo.constructionName} | 発注者: {constructionInfo.clientName}
+                {constructionInfo.deliveryType === 'consignment' ? '業務名' : '工事名'}: {constructionInfo.constructionName} | 発注者: {constructionInfo.clientName}
               </div>
             </div>
           </div>
@@ -96,8 +148,74 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
           </div>
         </div>
 
-        {/* サマリーカード */}
-        <div className="p-6 overflow-y-auto space-y-6">
+        {/* サマリー ＆ データ管理バー */}
+        <div className="p-6 overflow-y-auto space-y-5">
+          {/* 検査データ管理・一括操作バー (印刷非表示) */}
+          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
+            <div className="flex items-center gap-2">
+              {onBulkMarkOk && uninspectedCount > 0 && (
+                <button
+                  onClick={onBulkMarkOk}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition active:scale-95"
+                  title="指摘（要確認）以外の未確認アイテムを一括で「適」にします"
+                >
+                  <CheckCheck className="w-4 h-4 text-emerald-200" />
+                  <span>未確認を一括適にする（残り {uninspectedCount} 件）</span>
+                </button>
+              )}
+              {uninspectedCount === 0 && totalItemsCount > 0 && (
+                <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/50 border border-emerald-800/60 px-2.5 py-1 rounded-lg">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>全アイテム検査完了 (100%)</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* JSONバックアップ保存 */}
+              <button
+                onClick={handleExportJson}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition active:scale-95"
+                title="検査結果・指摘事項をJSONファイルとして保存（別PCや後日の検査再開に使用可能）"
+              >
+                <FileJson className="w-3.5 h-3.5 text-blue-400" />
+                <span>JSON保存</span>
+              </button>
+
+              {/* JSONバックアップ読込 */}
+              {onImportBackup && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition active:scale-95"
+                    title="以前保存したJSONバックアップから検査記録を復元"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>JSON読込</span>
+                  </button>
+                </>
+              )}
+
+              {/* 記録リセット */}
+              {onResetInspection && records.length > 0 && (
+                <button
+                  onClick={onResetInspection}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 border border-rose-800/60 rounded-lg text-xs font-medium transition active:scale-95"
+                  title="この工事の検査記録を初期化"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                  <span>記録リセット</span>
+                </button>
+              )}
+            </div>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 print:grid-cols-4">
             <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl print:border print:border-gray-300">
               <div className="text-[11px] text-slate-400 print:text-gray-600 font-medium">点検記録件数</div>
@@ -173,7 +291,7 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
                     {records.map((r) => (
                       <tr key={r.targetId} className="hover:bg-slate-800/30">
                         <td className="py-2 px-3 text-slate-400 print:text-black">
-                          {r.targetType === 'photo' ? '工事写真' : r.targetType === 'report' ? '報告書類' : '図面'}
+                          {r.targetType === 'photo' ? (constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真') : r.targetType === 'report' ? '報告書類' : '図面'}
                         </td>
                         <td className="py-2 px-3 font-medium text-slate-200 print:text-black">
                           {r.targetTitle}

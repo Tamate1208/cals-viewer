@@ -8,7 +8,7 @@ import { PhotoViewer } from './components/PhotoViewer';
 import { InspectionTreeNav } from './components/InspectionTreeNav';
 import { InspectionReportView } from './components/InspectionReportView';
 import { SubWindowPortal } from './components/SubWindowPortal';
-import { FileText, Image as ImageIcon, ArrowRight, ShieldCheck, ExternalLink } from 'lucide-react';
+import { FileText, Image as ImageIcon, ArrowRight, ShieldCheck, ExternalLink, CheckCircle2 } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [dataset, setDataset] = useState<DeliveryDataset | null>(null);
@@ -18,6 +18,7 @@ export const App: React.FC = () => {
   const [showModeSelectModal, setShowModeSelectModal] = useState(false);
   const [inspectionRecords, setInspectionRecords] = useState<Record<string, InspectionRecord>>({});
   const [showReportModal, setShowReportModal] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // 選択中のアイテムID
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
@@ -52,7 +53,15 @@ export const App: React.FC = () => {
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
-        setInspectionRecords(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        setInspectionRecords(parsed);
+        const count = Object.keys(parsed).length;
+        if (count > 0) {
+          const okC = Object.values(parsed).filter((r: any) => r.status === 'ok').length;
+          const issueC = Object.values(parsed).filter((r: any) => r.status === 'issue').length;
+          setToastMessage(`前回の検査記録（適: ${okC}件 / 指摘: ${issueC}件）を自動復元しました`);
+          setTimeout(() => setToastMessage(null), 4000);
+        }
       } else {
         setInspectionRecords({});
       }
@@ -98,6 +107,123 @@ export const App: React.FC = () => {
   const hasDocs = !!dataset && (dataset.reports.length > 0 || dataset.drawings.length > 0);
   const hasPhotos = !!dataset && dataset.photos.length > 0;
 
+  // 合計点検対象数
+  const totalItemsCount = (dataset?.photos.length || 0) + (dataset?.reports.length || 0) + (dataset?.drawings.length || 0);
+
+  // 指摘（issue）以外の未確認アイテムを一括で「適（ok）」にする
+  const handleBulkMarkOk = () => {
+    if (!dataset) return;
+
+    const inspectedCount = Object.keys(inspectionRecords).length;
+    const uninspected = totalItemsCount - inspectedCount;
+    const issueCount = Object.values(inspectionRecords).filter(r => r.status === 'issue').length;
+
+    if (uninspected <= 0) {
+      alert('すべてのアイテムがすでに検査済みです。');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `【未確認アイテムの一括確認】\n\n` +
+      `現在チェック済みの「要確認・指摘（${issueCount} 件）」はそのまま維持し、\n` +
+      `残りの未確認アイテム（${uninspected} 件）をすべて「適（確認済）」にします。\n\n` +
+      `よろしいですか？`
+    );
+    if (!confirmed) return;
+
+    const updated: Record<string, InspectionRecord> = { ...inspectionRecords };
+    const now = new Date().toLocaleString('ja-JP');
+
+    // 1. 写真
+    dataset.photos.forEach(p => {
+      if (!updated[p.id] || updated[p.id].status !== 'issue') {
+        updated[p.id] = {
+          targetId: p.id,
+          targetType: 'photo',
+          targetTitle: p.title || p.fileName,
+          status: 'ok',
+          notes: updated[p.id]?.notes || '',
+          updatedAt: now,
+        };
+      }
+    });
+
+    // 2. 報告書
+    dataset.reports.forEach(r => {
+      if (!updated[r.id] || updated[r.id].status !== 'issue') {
+        updated[r.id] = {
+          targetId: r.id,
+          targetType: 'report',
+          targetTitle: r.title || r.fileName,
+          status: 'ok',
+          notes: updated[r.id]?.notes || '',
+          updatedAt: now,
+        };
+      }
+    });
+
+    // 3. 図面
+    dataset.drawings.forEach(d => {
+      if (!updated[d.id] || updated[d.id].status !== 'issue') {
+        updated[d.id] = {
+          targetId: d.id,
+          targetType: 'drawing',
+          targetTitle: d.title || d.fileName,
+          status: 'ok',
+          notes: updated[d.id]?.notes || '',
+          updatedAt: now,
+        };
+      }
+    });
+
+    setInspectionRecords(updated);
+    const storageKey = `cals_inspection_${dataset.constructionInfo.constructionName}`;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch (e) {
+      console.warn('localStorage save failed:', e);
+    }
+
+    setToastMessage(`未確認の ${uninspected} 件を一括で「適」に更新しました`);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // 検査記録のリセット（初期化）
+  const handleResetInspection = () => {
+    if (!dataset) return;
+    const confirmed = window.confirm(
+      `【検査記録のリセット】\n\n` +
+      `現在の工事・業務に関するすべての検査結果（適・指摘・メモ）を初期化します。\n\n` +
+      `本当によろしいですか？（この操作は元に戻せません）`
+    );
+    if (!confirmed) return;
+
+    setInspectionRecords({});
+    const storageKey = `cals_inspection_${dataset.constructionInfo.constructionName}`;
+    try {
+      localStorage.removeItem(storageKey);
+    } catch (e) {
+      console.warn('localStorage remove failed:', e);
+    }
+
+    setToastMessage('検査記録をリセットしました');
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // 検査記録のJSONバックアップ読込（インポート）
+  const handleImportBackup = (importedRecords: Record<string, InspectionRecord>) => {
+    if (!dataset) return;
+    setInspectionRecords(importedRecords);
+    const storageKey = `cals_inspection_${dataset.constructionInfo.constructionName}`;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(importedRecords));
+    } catch (e) {
+      console.warn('localStorage save failed:', e);
+    }
+    setToastMessage(`バックアップから ${Object.keys(importedRecords).length} 件の記録を復元しました`);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
   // 別窓（サブウィンドウ）の開閉トグル
   const handleToggleSubWindow = () => {
     if (subWindowMode) {
@@ -107,9 +233,6 @@ export const App: React.FC = () => {
       setSubWindowMode(viewMode === 'doc-only' ? 'photo-only' : 'doc-only');
     }
   };
-
-  // 合計点検対象数
-  const totalItemsCount = (dataset?.photos.length || 0) + (dataset?.reports.length || 0) + (dataset?.drawings.length || 0);
 
   return (
     <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans select-text">
@@ -133,6 +256,7 @@ export const App: React.FC = () => {
             hasPhotos={hasPhotos}
             onToggleSubWindow={handleToggleSubWindow}
             isSubWindowOpen={!!subWindowMode}
+            onBulkMarkOk={handleBulkMarkOk}
           />
 
           <main className="flex-1 flex overflow-hidden">
@@ -185,6 +309,10 @@ export const App: React.FC = () => {
             <InspectionReportView
               constructionInfo={dataset.constructionInfo}
               inspectionRecords={inspectionRecords}
+              totalItemsCount={totalItemsCount}
+              onBulkMarkOk={handleBulkMarkOk}
+              onResetInspection={handleResetInspection}
+              onImportBackup={handleImportBackup}
               onClose={() => setShowReportModal(false)}
             />
           )}
@@ -381,6 +509,14 @@ export const App: React.FC = () => {
             </SubWindowPortal>
           )}
         </>
+      )}
+
+      {/* 操作・復元通知トースト */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 border border-emerald-500/80 text-emerald-300 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs sm:text-sm font-semibold animate-in slide-in-from-bottom-3 duration-200">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
       )}
     </div>
   );
