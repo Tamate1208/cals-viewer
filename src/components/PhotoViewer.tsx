@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   CheckCircle2, 
   AlertCircle, 
@@ -39,6 +39,14 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [photosPerPage, setPhotosPerPage] = useState<number>(3); // 1, 2, 3, 4 枚表示 (デフォルト3枚綴じ)
   const [page, setPage] = useState<number>(0);
+
+  // サムネイルレール用 Ref & ドラッグ状態
+  const thumbnailRailRef = useRef<HTMLDivElement>(null);
+  const selectedThumbRef = useRef<HTMLButtonElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStartX, setDragStartX] = useState(0);
+  const [dragScrollLeft, setDragScrollLeft] = useState(0);
+  const [hasDragged, setHasDragged] = useState(false);
 
   const selectedPhotoId = controlledPhotoId !== undefined ? controlledPhotoId : internalPhotoId;
   const setSelectedPhotoId = (id: string) => {
@@ -99,6 +107,72 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
       }
     }
   }, [selectedPhotoId, filteredPhotos, photosPerPage]);
+
+  // 選択された写真が変わった場合、現在のフィルターに含まれていなければフィルターをリセットして表示を保証
+  useEffect(() => {
+    if (selectedPhotoId) {
+      const photo = photos.find(p => p.id === selectedPhotoId);
+      if (photo) {
+        if (selectedCategory !== 'all' && photo.category !== selectedCategory) {
+          setSelectedCategory('all');
+        }
+        if (selectedWorkType !== 'all' && photo.workType !== selectedWorkType) {
+          setSelectedWorkType('all');
+        }
+      }
+    }
+  }, [selectedPhotoId, photos, selectedCategory, selectedWorkType]);
+
+  // 1枚表示時、選択写真が変わったらサムネイルレールを中央へ滑らかに自動スクロール
+  useEffect(() => {
+    if (photosPerPage === 1 && selectedPhotoId && selectedThumbRef.current) {
+      selectedThumbRef.current.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      });
+    }
+  }, [selectedPhotoId, photosPerPage, filteredPhotos]);
+
+  // サムネイルレールのマウスホイール横スクロール変換
+  const handleRailWheel = (e: React.WheelEvent) => {
+    if (thumbnailRailRef.current) {
+      thumbnailRailRef.current.scrollLeft += e.deltaY;
+    }
+  };
+
+  // マウスドラッグでスクロール（Grab & Scroll）
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!thumbnailRailRef.current) return;
+    setIsDragging(true);
+    setHasDragged(false);
+    setDragStartX(e.clientX);
+    setDragScrollLeft(thumbnailRailRef.current.scrollLeft);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || !thumbnailRailRef.current) return;
+    const dx = e.clientX - dragStartX;
+    if (Math.abs(dx) > 3) {
+      setHasDragged(true);
+    }
+    thumbnailRailRef.current.scrollLeft = dragScrollLeft - dx;
+  };
+
+  const handleMouseUpOrLeave = () => {
+    setIsDragging(false);
+  };
+
+  // 左右矢印スクロール
+  const scrollRail = (direction: 'left' | 'right') => {
+    if (thumbnailRailRef.current) {
+      const amount = 360;
+      thumbnailRailRef.current.scrollBy({
+        left: direction === 'left' ? -amount : amount,
+        behavior: 'smooth',
+      });
+    }
+  };
 
   // フィルター変更時にページを0にリセット
   useEffect(() => {
@@ -386,55 +460,100 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
           )}
 
           {/* 下部サムネイルストリップ */}
-          <div className="h-32 bg-slate-950/80 border-t border-slate-800 p-2 overflow-x-auto flex gap-2 shrink-0">
-            {filteredPhotos.map((photo) => {
-              const isSelected = photo.id === currentPhoto?.id;
-              const rec = inspectionRecords[photo.id];
-              return (
+          <div className="flex flex-col shrink-0 border-t border-slate-800 bg-slate-950/90 select-none">
+            {/* サムネイルヘッダー: ガイド ＆ 左右スクロールボタン */}
+            <div className="flex items-center justify-between px-3 py-1 bg-slate-950 text-[11px] text-slate-400 border-b border-slate-850">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-300">
+                  写真一覧 ({filteredPhotos.length}件)
+                </span>
+                <span className="text-[10px] text-slate-500 hidden sm:inline">
+                  • 🖱️ マウスホイール上下またはドラッグで左右スクロール
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
                 <button
-                  key={photo.id}
-                  onClick={() => setSelectedPhotoId(photo.id)}
-                  className={`flex flex-col text-left rounded-lg overflow-hidden border transition shrink-0 w-28 bg-slate-900 relative group ${
-                    isSelected 
-                      ? 'border-blue-500 ring-2 ring-blue-500/30' 
-                      : 'border-slate-800 hover:border-slate-700'
-                  }`}
+                  onClick={() => scrollRail('left')}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                  title="左へスクロール"
                 >
-                  <div className="w-full h-16 bg-slate-950 flex items-center justify-center overflow-hidden relative">
-                    {photo.fileUrl ? (
-                      <img
-                        src={photo.fileUrl}
-                        alt={photo.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition"
-                      />
-                    ) : (
-                      <ImageIcon className="w-5 h-5 text-slate-700" />
-                    )}
-
-                    {rec?.status === 'ok' && (
-                      <div className="absolute top-1 right-1 bg-emerald-600 text-white rounded-full p-0.5 shadow">
-                        <CheckCircle2 className="w-3 h-3" />
-                      </div>
-                    )}
-                    {rec?.status === 'issue' && (
-                      <div className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-0.5 shadow">
-                        <AlertCircle className="w-3 h-3" />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="p-1.5 flex flex-col justify-between flex-1">
-                    <div className="text-[10px] font-medium text-slate-200 line-clamp-1 leading-tight">
-                      {photo.title}
-                    </div>
-                    <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1">
-                      <span>{photo.category}</span>
-                      <span>{photo.station || ''}</span>
-                    </div>
-                  </div>
+                  <ChevronLeft className="w-3.5 h-3.5" />
                 </button>
-              );
-            })}
+                <button
+                  onClick={() => scrollRail('right')}
+                  className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition"
+                  title="右へスクロール"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* スクロールレール */}
+            <div 
+              ref={thumbnailRailRef}
+              onWheel={handleRailWheel}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUpOrLeave}
+              onMouseLeave={handleMouseUpOrLeave}
+              className={`h-32 p-2 overflow-x-auto flex gap-2 shrink-0 scroll-smooth ${
+                isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
+              }`}
+            >
+              {filteredPhotos.map((photo) => {
+                const isSelected = photo.id === currentPhoto?.id;
+                const rec = inspectionRecords[photo.id];
+                return (
+                  <button
+                    key={photo.id}
+                    ref={isSelected ? selectedThumbRef : undefined}
+                    onClick={() => {
+                      if (!hasDragged) setSelectedPhotoId(photo.id);
+                    }}
+                    className={`flex flex-col text-left rounded-lg overflow-hidden border transition-all shrink-0 w-28 bg-slate-900 relative group ${
+                      isSelected 
+                        ? 'border-blue-500 ring-2 ring-blue-500/50 bg-blue-950/30 scale-[1.02] shadow-md z-10' 
+                        : 'border-slate-800 hover:border-slate-700 opacity-90 hover:opacity-100'
+                    }`}
+                  >
+                    <div className="w-full h-16 bg-slate-950 flex items-center justify-center overflow-hidden relative pointer-events-none">
+                      {photo.fileUrl ? (
+                        <img
+                          src={photo.fileUrl}
+                          alt={photo.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition"
+                          draggable={false}
+                        />
+                      ) : (
+                        <ImageIcon className="w-5 h-5 text-slate-700" />
+                      )}
+
+                      {rec?.status === 'ok' && (
+                        <div className="absolute top-1 right-1 bg-emerald-600 text-white rounded-full p-0.5 shadow">
+                          <CheckCircle2 className="w-3 h-3" />
+                        </div>
+                      )}
+                      {rec?.status === 'issue' && (
+                        <div className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-0.5 shadow">
+                          <AlertCircle className="w-3 h-3" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-1.5 flex flex-col justify-between flex-1 pointer-events-none">
+                      <div className="text-[10px] font-medium text-slate-200 line-clamp-1 leading-tight">
+                        {photo.title}
+                      </div>
+                      <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1">
+                        <span className="truncate max-w-[50px]">{photo.category}</span>
+                        <span className="truncate max-w-[50px]">{photo.station || ''}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : (
