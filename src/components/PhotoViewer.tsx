@@ -10,11 +10,10 @@ import {
   Calendar, 
   MapPin, 
   FileCheck,
-  BookOpen,
-  Maximize2,
   ChevronLeft,
   ChevronRight,
-  Printer
+  Printer,
+  Grid
 } from 'lucide-react';
 import type { InspectionRecord, PhotoItem } from '../types/cals';
 
@@ -38,8 +37,8 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
   const [selectedWorkType, setSelectedWorkType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const [viewMode, setViewMode] = useState<'single' | 'album'>('album'); // デフォルトを3枚綴じ写真台帳に
-  const [albumPage, setAlbumPage] = useState<number>(0); // 3枚ごとのページインデックス
+  const [photosPerPage, setPhotosPerPage] = useState<number>(3); // 1, 2, 3, 4 枚表示 (デフォルト3枚綴じ)
+  const [page, setPage] = useState<number>(0);
 
   const selectedPhotoId = controlledPhotoId !== undefined ? controlledPhotoId : internalPhotoId;
   const setSelectedPhotoId = (id: string) => {
@@ -90,28 +89,31 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
 
   // 選択された写真が変わった場合、その写真が含まれるページに自動追従
   useEffect(() => {
-    if (selectedPhotoId) {
+    if (selectedPhotoId && photosPerPage > 1) {
       const idx = filteredPhotos.findIndex(p => p.id === selectedPhotoId);
       if (idx >= 0) {
-        const targetPage = Math.floor(idx / 3);
-        if (targetPage !== albumPage) {
-          setAlbumPage(targetPage);
+        const targetPage = Math.floor(idx / photosPerPage);
+        if (targetPage !== page) {
+          setPage(targetPage);
         }
       }
     }
-  }, [selectedPhotoId, filteredPhotos]);
+  }, [selectedPhotoId, filteredPhotos, photosPerPage]);
 
   // フィルター変更時にページを0にリセット
   useEffect(() => {
-    setAlbumPage(0);
-  }, [selectedCategory, selectedWorkType, searchQuery]);
+    setPage(0);
+  }, [selectedCategory, selectedWorkType, searchQuery, photosPerPage]);
 
-  // 台帳モードでの3枚スライス
-  const totalAlbumPages = Math.ceil(filteredPhotos.length / 3) || 1;
-  const currentAlbumPhotos = useMemo(() => {
-    const start = albumPage * 3;
-    return filteredPhotos.slice(start, start + 3);
-  }, [filteredPhotos, albumPage]);
+  // ページネーション用計算
+  const totalPages = Math.ceil(filteredPhotos.length / photosPerPage) || 1;
+  const currentPagedPhotos = useMemo(() => {
+    if (photosPerPage === 1) {
+      return currentPhoto ? [currentPhoto] : [];
+    }
+    const start = page * photosPerPage;
+    return filteredPhotos.slice(start, start + photosPerPage);
+  }, [filteredPhotos, page, photosPerPage, currentPhoto]);
 
   // 検査ステータス更新
   const handleSetStatus = (photo: PhotoItem, status: 'ok' | 'issue') => {
@@ -140,35 +142,29 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-900 text-slate-100 overflow-hidden">
-      {/* フィルター＆モード切替ヘッダー */}
+      {/* フィルター＆枚数切替ヘッダー */}
       <div className="px-3 py-2 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2 overflow-x-auto py-0.5">
-          {/* 表示モード切り替えトグル */}
-          <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 shrink-0">
-            <button
-              onClick={() => setViewMode('album')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                viewMode === 'album'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="A4縦 3枚綴じの写真台帳形式で表示"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>写真台帳 (3枚綴じ)</span>
-            </button>
-            <button
-              onClick={() => setViewMode('single')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                viewMode === 'single'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="1枚写真を大きく拡大表示"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-              <span>1枚詳細</span>
-            </button>
+          {/* 表示枚数段階切り替えボタン [1枚] [2枚] [3枚] [4枚] */}
+          <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-800 shrink-0">
+            <span className="text-[10px] text-slate-500 font-semibold px-1.5 flex items-center gap-1">
+              <Grid className="w-3 h-3 text-blue-400" />
+              <span>表示:</span>
+            </span>
+            {[1, 2, 3, 4].map((count) => (
+              <button
+                key={count}
+                onClick={() => setPhotosPerPage(count)}
+                className={`px-2 py-1 rounded text-xs font-semibold transition ${
+                  photosPerPage === count
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+                }`}
+                title={count === 1 ? '1枚拡大表示' : `写真台帳（${count}枚綴じ）`}
+              >
+                {count}枚
+              </button>
+            ))}
           </div>
 
           <div className="h-4 w-px bg-slate-800 shrink-0" />
@@ -227,225 +223,8 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
         </div>
       </div>
 
-      {/* ==================== 1. 写真台帳（3枚綴じ）表示モード ==================== */}
-      {viewMode === 'album' ? (
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
-          {/* 台帳ページネーションバー */}
-          <div className="px-4 py-2 bg-slate-900/60 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
-            <div className="flex items-center gap-2 text-xs text-slate-300">
-              <span className="font-semibold text-blue-400">工事写真台帳</span>
-              <span className="text-slate-500">|</span>
-              <span>
-                {filteredPhotos.length === 0 ? '0' : albumPage * 3 + 1} - {Math.min((albumPage + 1) * 3, filteredPhotos.length)} / 全 {filteredPhotos.length} 枚
-              </span>
-              <span className="text-slate-500">（ページ {albumPage + 1} / {totalAlbumPages}）</span>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setAlbumPage(prev => Math.max(prev - 1, 0))}
-                disabled={albumPage <= 0}
-                className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 transition"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>前の3枚</span>
-              </button>
-              <button
-                onClick={() => setAlbumPage(prev => Math.min(prev + 1, totalAlbumPages - 1))}
-                disabled={albumPage >= totalAlbumPages - 1}
-                className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 transition"
-              >
-                <span>次の3枚</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => window.print()}
-                className="flex items-center gap-1 px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700 text-xs text-slate-400 hover:text-slate-200 transition ml-2"
-                title="写真台帳を印刷・PDF保存"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">印刷</span>
-              </button>
-            </div>
-          </div>
-
-          {/* 3枚綴じ台帳スクロール領域 */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 space-y-4 max-w-5xl mx-auto w-full">
-            {currentAlbumPhotos.length === 0 ? (
-              <div className="p-12 text-center text-slate-500 text-sm">該当する写真がありません</div>
-            ) : (
-              currentAlbumPhotos.map((photo, indexOnPage) => {
-                const isSelected = photo.id === currentPhoto?.id;
-                const rec = inspectionRecords[photo.id];
-                const globalIndex = albumPage * 3 + indexOnPage + 1;
-
-                return (
-                  <div
-                    key={photo.id}
-                    onClick={() => setSelectedPhotoId(photo.id)}
-                    className={`bg-slate-900 border rounded-xl overflow-hidden shadow-lg transition flex flex-col md:flex-row cursor-pointer ${
-                      isSelected
-                        ? 'border-blue-500 ring-2 ring-blue-500/30'
-                        : 'border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    {/* 左側: 写真画像領域 (アスペクト比 4:3) */}
-                    <div className="w-full md:w-5/12 bg-black/60 relative flex items-center justify-center min-h-[220px] md:min-h-[260px] p-2 border-b md:border-b-0 md:border-r border-slate-800">
-                      {photo.fileUrl ? (
-                        <img
-                          src={photo.fileUrl}
-                          alt={photo.title}
-                          className="max-w-full max-h-[280px] object-contain rounded shadow"
-                        />
-                      ) : (
-                        <div className="text-center text-slate-600 p-4">
-                          <ImageIcon className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                          <span className="text-xs">写真画像未格納</span>
-                        </div>
-                      )}
-
-                      {/* 写真番号バッジ */}
-                      <div className="absolute top-2 left-2 bg-slate-950/80 backdrop-blur border border-slate-700 text-slate-300 text-[10px] font-mono px-2 py-0.5 rounded shadow">
-                        No. {globalIndex} / {filteredPhotos.length}
-                      </div>
-
-                      {/* ステータスアイコン */}
-                      {rec?.status === 'ok' && (
-                        <div className="absolute top-2 right-2 bg-emerald-600 text-white rounded-full p-1 shadow">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        </div>
-                      )}
-                      {rec?.status === 'issue' && (
-                        <div className="absolute top-2 right-2 bg-rose-600 text-white rounded-full p-1 shadow">
-                          <AlertCircle className="w-3.5 h-3.5" />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 右側: 工事写真台帳・電子黒板データフォーム */}
-                    <div className="w-full md:w-7/12 p-3 sm:p-4 flex flex-col justify-between space-y-3">
-                      <div>
-                        {/* ヘッダー: 区分 ＆ タイトル */}
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div>
-                            <div className="flex items-center gap-1.5 mb-1">
-                              <span className="bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[10px] font-semibold px-2 py-0.5 rounded">
-                                {photo.category}
-                              </span>
-                              <span className="bg-slate-800 text-slate-300 text-[10px] px-1.5 py-0.5 rounded">
-                                {photo.type}
-                              </span>
-                              <span className="font-mono text-slate-500 text-[10px]">
-                                {photo.fileName}
-                              </span>
-                            </div>
-                            <h3 className="text-sm font-bold text-slate-100 leading-snug">
-                              {photo.title}
-                            </h3>
-                          </div>
-                        </div>
-
-                        {/* 工事写真台帳テーブル（A4台帳風フォーマット） */}
-                        <table className="w-full text-xs border-collapse bg-slate-950/80 rounded-lg border border-slate-800 overflow-hidden mb-2">
-                          <tbody>
-                            <tr className="border-b border-slate-800/80">
-                              <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium w-1/4">工種</th>
-                              <td className="py-1 px-2.5 text-slate-200">
-                                {photo.workType || 'ー'}
-                                {photo.workKind ? ` / ${photo.workKind}` : ''}
-                                {photo.workDetail ? ` (${photo.workDetail})` : ''}
-                              </td>
-                            </tr>
-                            <tr className="border-b border-slate-800/80">
-                              <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium">測点 / 箇所</th>
-                              <td className="py-1 px-2.5 text-slate-200 font-mono">
-                                {photo.station || 'ー'}
-                              </td>
-                            </tr>
-                            <tr className="border-b border-slate-800/80">
-                              <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium">撮影年月日</th>
-                              <td className="py-1 px-2.5 text-slate-200">
-                                {photo.date || 'ー'} {photo.time || ''}
-                              </td>
-                            </tr>
-                            {/* 電子黒板情報（測定項目・設計値・実測値など） */}
-                            {photo.blackboardItems && photo.blackboardItems.length > 0 && (
-                              photo.blackboardItems
-                                .filter(bb => !['工種', '種別', '細別', '測点', '項目'].includes(bb.name))
-                                .map((bb, bIdx) => (
-                                  <tr key={bIdx} className="border-b border-slate-800/80 last:border-0">
-                                    <th className="py-1 px-2.5 bg-slate-900 text-emerald-400/90 text-left font-medium">
-                                      {bb.name}
-                                    </th>
-                                    <td className="py-1 px-2.5 text-slate-100 font-mono font-medium">
-                                      {bb.value}
-                                    </td>
-                                  </tr>
-                                ))
-                            )}
-                            {photo.remarks && (
-                              <tr>
-                                <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium">備考</th>
-                                <td className="py-1 px-2.5 text-slate-300 text-[11px]">{photo.remarks}</td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* 台帳カード内 検査チェックバー */}
-                      <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSetStatus(photo, 'ok');
-                            }}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                              rec?.status === 'ok'
-                                ? 'bg-emerald-600 text-white shadow'
-                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-emerald-400'
-                            }`}
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>{rec?.status === 'ok' ? '確認済 (適)' : '確認済みにする'}</span>
-                          </button>
-
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSetStatus(photo, 'issue');
-                            }}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                              rec?.status === 'issue'
-                                ? 'bg-rose-600 text-white shadow'
-                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-rose-400'
-                            }`}
-                          >
-                            <AlertCircle className="w-3.5 h-3.5" />
-                            <span>{rec?.status === 'issue' ? '要確認・指摘' : '指摘・要確認'}</span>
-                          </button>
-                        </div>
-
-                        <div className="flex-1 min-w-[200px]" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="text"
-                            placeholder="検査メモ入力..."
-                            value={rec?.notes || ''}
-                            onChange={(e) => handleUpdateNotes(photo, e.target.value)}
-                            className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      ) : (
-        /* ==================== 2. 1枚詳細表示モード ==================== */
+      {/* ==================== 1枚拡大表示モード ==================== */}
+      {photosPerPage === 1 ? (
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* 写真プレビュー ＆ 電子黒板情報 */}
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-slate-950">
@@ -656,6 +435,228 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
                 </button>
               );
             })}
+          </div>
+        </div>
+      ) : (
+        /* ==================== 2枚・3枚・4枚 写真台帳モード ==================== */
+        <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+          {/* 台帳ページネーションバー */}
+          <div className="px-4 py-2 bg-slate-900/60 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              <span className="font-semibold text-blue-400">工事写真台帳 ({photosPerPage}枚綴じ)</span>
+              <span className="text-slate-500">|</span>
+              <span>
+                {filteredPhotos.length === 0 ? '0' : page * photosPerPage + 1} - {Math.min((page + 1) * photosPerPage, filteredPhotos.length)} / 全 {filteredPhotos.length} 枚
+              </span>
+              <span className="text-slate-500">（ページ {page + 1} / {totalPages}）</span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setPage(prev => Math.max(prev - 1, 0))}
+                disabled={page <= 0}
+                className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 transition"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>前の{photosPerPage}枚</span>
+              </button>
+              <button
+                onClick={() => setPage(prev => Math.min(prev + 1, totalPages - 1))}
+                disabled={page >= totalPages - 1}
+                className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs text-slate-200 transition"
+              >
+                <span>次の{photosPerPage}枚</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-1 px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700 text-xs text-slate-400 hover:text-slate-200 transition ml-2"
+                title="写真台帳を印刷・PDF保存"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">印刷</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 台帳スクロール領域 */}
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 max-w-5xl mx-auto w-full">
+            {currentPagedPhotos.length === 0 ? (
+              <div className="p-12 text-center text-slate-500 text-sm">該当する写真がありません</div>
+            ) : (
+              currentPagedPhotos.map((photo, indexOnPage) => {
+                const isSelected = photo.id === currentPhoto?.id;
+                const rec = inspectionRecords[photo.id];
+                const globalIndex = page * photosPerPage + indexOnPage + 1;
+
+                // 2枚、3枚、4枚で高さを最適化
+                const minImgHeight = photosPerPage === 2 ? 'min-h-[280px]' : photosPerPage === 4 ? 'min-h-[170px]' : 'min-h-[220px]';
+                const maxImgHeight = photosPerPage === 2 ? 'max-h-[320px]' : photosPerPage === 4 ? 'max-h-[190px]' : 'max-h-[250px]';
+
+                return (
+                  <div
+                    key={photo.id}
+                    onClick={() => setSelectedPhotoId(photo.id)}
+                    className={`bg-slate-900 border rounded-xl overflow-hidden shadow-lg transition flex flex-col md:flex-row cursor-pointer ${
+                      isSelected
+                        ? 'border-blue-500 ring-2 ring-blue-500/30'
+                        : 'border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {/* 左側: 写真画像領域 */}
+                    <div className={`w-full md:w-5/12 bg-black/60 relative flex items-center justify-center ${minImgHeight} p-2 border-b md:border-b-0 md:border-r border-slate-800`}>
+                      {photo.fileUrl ? (
+                        <img
+                          src={photo.fileUrl}
+                          alt={photo.title}
+                          className={`max-w-full ${maxImgHeight} object-contain rounded shadow`}
+                        />
+                      ) : (
+                        <div className="text-center text-slate-600 p-4">
+                          <ImageIcon className="w-8 h-8 mx-auto mb-1 opacity-50" />
+                          <span className="text-xs">写真画像未格納</span>
+                        </div>
+                      )}
+
+                      {/* 写真番号バッジ */}
+                      <div className="absolute top-2 left-2 bg-slate-950/80 backdrop-blur border border-slate-700 text-slate-300 text-[10px] font-mono px-2 py-0.5 rounded shadow">
+                        No. {globalIndex} / {filteredPhotos.length}
+                      </div>
+
+                      {/* ステータスアイコン */}
+                      {rec?.status === 'ok' && (
+                        <div className="absolute top-2 right-2 bg-emerald-600 text-white rounded-full p-1 shadow">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        </div>
+                      )}
+                      {rec?.status === 'issue' && (
+                        <div className="absolute top-2 right-2 bg-rose-600 text-white rounded-full p-1 shadow">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 右側: 工事写真台帳・電子黒板データフォーム */}
+                    <div className="w-full md:w-7/12 p-3 sm:p-4 flex flex-col justify-between space-y-2">
+                      <div>
+                        {/* ヘッダー: 区分 ＆ タイトル */}
+                        <div className="flex items-start justify-between gap-2 mb-1.5">
+                          <div>
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[10px] font-semibold px-2 py-0.5 rounded">
+                                {photo.category}
+                              </span>
+                              <span className="bg-slate-800 text-slate-300 text-[10px] px-1.5 py-0.5 rounded">
+                                {photo.type}
+                              </span>
+                              <span className="font-mono text-slate-500 text-[10px]">
+                                {photo.fileName}
+                              </span>
+                            </div>
+                            <h3 className="text-xs sm:text-sm font-bold text-slate-100 leading-snug">
+                              {photo.title}
+                            </h3>
+                          </div>
+                        </div>
+
+                        {/* 工事写真台帳テーブル */}
+                        <table className="w-full text-xs border-collapse bg-slate-950/80 rounded-lg border border-slate-800 overflow-hidden mb-2">
+                          <tbody>
+                            <tr className="border-b border-slate-800/80">
+                              <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium w-1/4">工種</th>
+                              <td className="py-1 px-2.5 text-slate-200">
+                                {photo.workType || 'ー'}
+                                {photo.workKind ? ` / ${photo.workKind}` : ''}
+                                {photo.workDetail ? ` (${photo.workDetail})` : ''}
+                              </td>
+                            </tr>
+                            <tr className="border-b border-slate-800/80">
+                              <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium">測点 / 箇所</th>
+                              <td className="py-1 px-2.5 text-slate-200 font-mono">
+                                {photo.station || 'ー'}
+                              </td>
+                            </tr>
+                            <tr className="border-b border-slate-800/80">
+                              <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium">撮影年月日</th>
+                              <td className="py-1 px-2.5 text-slate-200">
+                                {photo.date || 'ー'} {photo.time || ''}
+                              </td>
+                            </tr>
+                            {/* 電子黒板情報（測定項目・設計値・実測値など） */}
+                            {photo.blackboardItems && photo.blackboardItems.length > 0 && (
+                              photo.blackboardItems
+                                .filter(bb => !['工種', '種別', '細別', '測点', '項目'].includes(bb.name))
+                                .slice(0, photosPerPage === 4 ? 2 : 4) // 4枚表示時はコンパクトに表示
+                                .map((bb, bIdx) => (
+                                  <tr key={bIdx} className="border-b border-slate-800/80 last:border-0">
+                                    <th className="py-1 px-2.5 bg-slate-900 text-emerald-400/90 text-left font-medium">
+                                      {bb.name}
+                                    </th>
+                                    <td className="py-1 px-2.5 text-slate-100 font-mono font-medium">
+                                      {bb.value}
+                                    </td>
+                                  </tr>
+                                ))
+                            )}
+                            {photo.remarks && (
+                              <tr>
+                                <th className="py-1 px-2.5 bg-slate-900 text-slate-400 text-left font-medium">備考</th>
+                                <td className="py-1 px-2.5 text-slate-300 text-[11px] truncate max-w-xs">{photo.remarks}</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* 台帳カード内 検査チェックバー */}
+                      <div className="pt-1.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSetStatus(photo, 'ok');
+                            }}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
+                              rec?.status === 'ok'
+                                ? 'bg-emerald-600 text-white shadow'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-emerald-400'
+                            }`}
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>{rec?.status === 'ok' ? '確認済 (適)' : '確認済みにする'}</span>
+                          </button>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSetStatus(photo, 'issue');
+                            }}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
+                              rec?.status === 'issue'
+                                ? 'bg-rose-600 text-white shadow'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-rose-400'
+                            }`}
+                          >
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            <span>{rec?.status === 'issue' ? '要確認・指摘' : '指摘・要確認'}</span>
+                          </button>
+                        </div>
+
+                        <div className="flex-1 min-w-[180px]" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="text"
+                            placeholder="検査メモ入力..."
+                            value={rec?.notes || ''}
+                            onChange={(e) => handleUpdateNotes(photo, e.target.value)}
+                            className="w-full px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}

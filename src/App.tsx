@@ -28,7 +28,7 @@ export const App: React.FC = () => {
     setSelectedReportId(newDataset.reports[0]?.id || null);
     setSelectedDrawingId(newDataset.drawings[0]?.id || null);
     setSelectedPhotoId(newDataset.photos[0]?.id || null);
-    setDocTab('reports');
+    setDocTab('index'); // 初期表示はツリー先頭の工事基本情報（INDEX）
 
     const storageKey = `cals_inspection_${newDataset.constructionInfo.constructionName}`;
     try {
@@ -108,7 +108,9 @@ export const App: React.FC = () => {
               selectedReportId={selectedReportId}
               selectedDrawingId={selectedDrawingId}
               selectedPhotoId={selectedPhotoId}
+              isIndexSelected={docTab === 'index'}
               inspectionRecords={inspectionRecords}
+              onSelectIndex={() => setDocTab('index')}
               onSelectReport={handleTreeSelectReport}
               onSelectDrawing={handleTreeSelectDrawing}
               onSelectPhoto={setSelectedPhotoId}

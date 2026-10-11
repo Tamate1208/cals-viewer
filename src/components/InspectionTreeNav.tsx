@@ -15,7 +15,8 @@ import {
   Layers,
   ChevronsDown,
   ChevronsUp,
-  Tag
+  Tag,
+  FileSpreadsheet
 } from 'lucide-react';
 import type { DrawingItem, InspectionRecord, PhotoItem, ReportItem } from '../types/cals';
 
@@ -26,7 +27,9 @@ interface InspectionTreeNavProps {
   selectedReportId: string | null;
   selectedDrawingId: string | null;
   selectedPhotoId: string | null;
+  isIndexSelected?: boolean;
   inspectionRecords: Record<string, InspectionRecord>;
+  onSelectIndex?: () => void;
   onSelectReport: (id: string) => void;
   onSelectDrawing: (id: string) => void;
   onSelectPhoto: (id: string) => void;
@@ -39,7 +42,9 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   selectedReportId,
   selectedDrawingId,
   selectedPhotoId,
+  isIndexSelected = false,
   inspectionRecords,
+  onSelectIndex,
   onSelectReport,
   onSelectDrawing,
   onSelectPhoto,
@@ -319,11 +324,39 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
       {/* ツリーコンテンツ */}
       <div className="flex-1 overflow-y-auto p-2 text-xs divide-y divide-transparent">
         {activeTab === 'docs' ? (
-          /* ==================== 書類ツリー (大分類 > 帳票名 > 鑑・本文) ==================== */
-          Object.keys(filteredDocGroups).length === 0 ? (
-            <div className="p-4 text-center text-slate-500 text-xs">該当する書類がありません</div>
-          ) : (
-            <div className="space-y-1">
+          /* ==================== 書類ツリー (工事基本情報 + 大分類 > 帳票名 > 鑑・本文) ==================== */
+          <div>
+            {/* 工事基本情報 (INDEX_C.XML) */}
+            {(!searchQuery || 
+              '工事基本情報'.toLowerCase().includes(searchQuery.toLowerCase()) || 
+              'index'.toLowerCase().includes(searchQuery.toLowerCase()) || 
+              '工事概要'.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              '概要'.toLowerCase().includes(searchQuery.toLowerCase())
+            ) && (
+              <div className="mb-2 pb-2 border-b border-slate-800">
+                <button
+                  onClick={() => onSelectIndex?.()}
+                  className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition font-semibold ${
+                    isIndexSelected
+                      ? 'bg-blue-600/25 text-blue-300 border border-blue-500/50 shadow-sm'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-900 border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <FileSpreadsheet className={`w-4 h-4 shrink-0 ${isIndexSelected ? 'text-blue-400' : 'text-emerald-400'}`} />
+                    <span className="truncate text-xs">工事基本情報 (INDEX)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 bg-slate-850 px-1.5 py-0.5 rounded border border-slate-750 shrink-0">
+                    概要
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {Object.keys(filteredDocGroups).length === 0 ? (
+              <div className="p-4 text-center text-slate-500 text-xs">該当する書類がありません</div>
+            ) : (
+              <div className="space-y-1">
               {Object.entries(filteredDocGroups).map(([catName, groupMap]) => {
                 const catKey = `doc_cat_${catName}`;
                 const catOpen = isFolderOpen(catKey);
@@ -462,7 +495,8 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
                 );
               })}
             </div>
-          )
+          )}
+          </div>
         ) : (
           /* ==================== 工事写真ツリー (工種 > 区分 > 項目 > 写真) ==================== */
           Object.keys(filteredPhotoGroups).length === 0 ? (

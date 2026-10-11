@@ -4,7 +4,6 @@ import {
   AlertCircle, 
   FileText, 
   FolderGit2, 
-  Info, 
   ExternalLink, 
   Search, 
   FileSpreadsheet,
@@ -34,23 +33,15 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   drawings,
   selectedReportId: controlledReportId,
   selectedDrawingId: controlledDrawingId,
-  activeTab: controlledActiveTab,
+  activeTab = 'reports',
   inspectionRecords,
   onSelectReport,
   onSelectDrawing,
-  onActiveTabChange,
   onUpdateInspection,
 }) => {
-  const [internalTab, setInternalTab] = useState<'reports' | 'drawings' | 'index'>('reports');
   const [internalReportId, setInternalReportId] = useState<string | null>(reports[0]?.id || null);
   const [internalDrawingId, setInternalDrawingId] = useState<string | null>(drawings[0]?.id || null);
   const [searchQuery, setSearchQuery] = useState('');
-
-  const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalTab;
-  const setActiveTab = (tab: 'reports' | 'drawings' | 'index') => {
-    setInternalTab(tab);
-    onActiveTabChange?.(tab);
-  };
 
   const selectedReportId = controlledReportId !== undefined ? controlledReportId : internalReportId;
   const setSelectedReportId = (id: string) => {
@@ -115,53 +106,12 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-900 text-slate-100 border-r border-slate-800">
-      {/* タブバー */}
-      <div className="flex items-center justify-between px-3 pt-2 bg-slate-950 border-b border-slate-800 shrink-0">
-        <div className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('reports')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg transition border-t border-x ${
-              activeTab === 'reports'
-                ? 'bg-slate-900 border-slate-700 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>報告書・書類 ({reports.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('drawings')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg transition border-t border-x ${
-              activeTab === 'drawings'
-                ? 'bg-slate-900 border-slate-700 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
-            }`}
-          >
-            <FolderGit2 className="w-3.5 h-3.5" />
-            <span>完成図面 ({drawings.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('index')}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-t-lg transition border-t border-x ${
-              activeTab === 'index'
-                ? 'bg-slate-900 border-slate-700 text-blue-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
-            }`}
-          >
-            <Info className="w-3.5 h-3.5" />
-            <span>工事概要 (INDEX)</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 工事概要タブ */}
+      {/* 工事概要（INDEX）選択時 */}
       {activeTab === 'index' ? (
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
-            <h3 className="text-sm font-bold text-slate-200 mb-3 flex items-center gap-2">
-              <FileSpreadsheet className="w-4 h-4 text-blue-400" />
+          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-5 shadow-sm">
+            <h3 className="text-sm font-bold text-slate-200 mb-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
               <span>工事基本情報（INDEX_C.XML）</span>
             </h3>
             <table className="w-full text-xs border-collapse">
