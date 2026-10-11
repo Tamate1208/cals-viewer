@@ -53,7 +53,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<'docs' | 'photos'>('docs');
-  const [photoTreeMode, setPhotoTreeMode] = useState<'standard' | 'timeline' | 'station'>('standard');
+  const [photoTreeMode, setPhotoTreeMode] = useState<'workTree' | 'timeline' | 'category' | 'station'>('workTree');
   const [searchQuery, setSearchQuery] = useState('');
 
   // フォルダの展開/折りたたみ状態を管理（デフォルトは閉じた状態）
@@ -177,8 +177,103 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     return sortedGroups;
   }, [reports, drawings]);
 
-  // ==================== 写真ツリーの要領準拠階層化 ====================
-  // 写真区分 (要領規定順) -> 工種/種別 (固定値「工事」排除) -> 細別/項目 -> 写真リスト (撮影日時順)
+  // 写真区分バッジのスタイルヘルパー
+  const getPhotoCategoryBadge = (category: string) => {
+    if (/出来形/.test(category)) {
+      return { label: '出来形', cls: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' };
+    }
+    if (/品質/.test(category)) {
+      return { label: '品質', cls: 'bg-purple-500/20 text-purple-400 border-purple-500/40' };
+    }
+    if (/施工/.test(category)) {
+      return { label: '施工', cls: 'bg-blue-500/20 text-blue-400 border-blue-500/40' };
+    }
+    if (/材料/.test(category)) {
+      return { label: '材料', cls: 'bg-amber-500/20 text-amber-400 border-amber-500/40' };
+    }
+    if (/安全/.test(category)) {
+      return { label: '安全', cls: 'bg-orange-500/20 text-orange-400 border-orange-500/40' };
+    }
+    if (/着手|着工|完成|全景/.test(category)) {
+      return { label: '全景/完成', cls: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40' };
+    }
+    if (/災害/.test(category)) {
+      return { label: '災害', cls: 'bg-rose-500/20 text-rose-400 border-rose-500/40' };
+    }
+    return { label: category || '写真', cls: 'bg-slate-700/60 text-slate-300 border-slate-600' };
+  };
+
+  // ==================== 1. 工種体系ツリー (工種 > 種別 > 細別 > 写真) ====================
+  // 現場実務・設計内訳書・写真管理ソフトに完全準拠したスマート階層化
+  const workTreeGroups = useMemo(() => {
+    interface WKind {
+      kindName: string;
+      totalCount: number;
+      details: Record<string, PhotoItem[]>;
+    }
+    interface WType {
+      workType: string;
+      totalCount: number;
+      kinds: Record<string, WKind>;
+    }
+
+    const map: Record<string, WType> = {};
+
+    // 撮影日時昇順でソート
+    const sortedPhotos = [...photos].sort((a, b) => {
+      const d1 = (a.date || '') + (a.time || '');
+      const d2 = (b.date || '') + (b.time || '');
+      if (d1 !== d2) return d1.localeCompare(d2);
+      return (a.station || '').localeCompare(b.station || '');
+    });
+
+    sortedPhotos.forEach(p => {
+      // 1. 工種 (workType): 固定値「工事」「一般工種」等は除外
+      let wt = p.workType?.trim() || '';
+      if (!wt || ['工事', '一般工種', '工事写真', '本工事', '一般'].includes(wt)) {
+        wt = p.workKind?.trim() || p.category || '本工事';
+      }
+
+      // 2. 種別 (workKind): 工種と同じ名前なら空にして二重フォルダ化を防ぐ
+      let wk = p.workKind?.trim() || '';
+      if (wk === wt || ['工事', '一般工種', '一般'].includes(wk)) {
+        wk = '';
+      }
+
+      // 3. 細別 (workDetail): 種別や工種と同じ名前なら空にする
+      let wd = p.workDetail?.trim() || '';
+      if (wd === wk || wd === wt || ['工事', '一般'].includes(wd)) {
+        wd = '';
+      }
+
+      // 種別・細別が両方空で、タイトルに明確な内容があれば細別に採用
+      if (!wk && !wd && p.title && p.title !== wt && p.title !== p.fileName) {
+        wd = p.title;
+      }
+
+      const kindKey = wk || '__DIRECT__';
+      const detailKey = wd || '__DIRECT__';
+
+      if (!map[wt]) {
+        map[wt] = { workType: wt, totalCount: 0, kinds: {} };
+      }
+      map[wt].totalCount += 1;
+
+      if (!map[wt].kinds[kindKey]) {
+        map[wt].kinds[kindKey] = { kindName: wk, totalCount: 0, details: {} };
+      }
+      map[wt].kinds[kindKey].totalCount += 1;
+
+      if (!map[wt].kinds[kindKey].details[detailKey]) {
+        map[wt].kinds[kindKey].details[detailKey] = [];
+      }
+      map[wt].kinds[kindKey].details[detailKey].push(p);
+    });
+
+    return map;
+  }, [photos]);
+
+  // ==================== 2. 写真区分ツリー (要領規定順: 着手前完成 > 施工状況 > 出来形 等) ====================
   const photoGroups = useMemo(() => {
     const rawGroups: Record<string, Record<string, Record<string, PhotoItem[]>>> = {};
 
@@ -191,19 +286,16 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     });
 
     sortedPhotos.forEach(p => {
-      // 1. 写真区分 (施工状況写真、出来形管理写真等)
       const category = p.category || '施工状況写真';
 
-      // 2. 工種/種別 (「工事」「一般工種」等の固定値を自動検知して除外し、より具体的な種別・細別を採用)
       let effectiveWork = p.workType?.trim() || '';
       if (!effectiveWork || effectiveWork === '工事' || effectiveWork === '一般工種' || effectiveWork === '工事写真' || effectiveWork === '本工事') {
         effectiveWork = p.workKind?.trim() || p.workDetail?.trim() || '本工事';
       }
 
-      // 3. 細別/項目 (「工事」固定値を排除し、細別や測点を採用)
-      let effectiveItem = p.title?.trim() || '';
-      if (!effectiveItem || effectiveItem === '工事' || effectiveItem === '写真項目' || effectiveItem === effectiveWork) {
-        effectiveItem = p.workDetail?.trim() || (p.station ? `測点: ${p.station}` : '') || p.fileName;
+      let effectiveItem = p.workDetail?.trim() || p.title?.trim() || '';
+      if (!effectiveItem || effectiveItem === '工事' || effectiveItem === effectiveWork) {
+        effectiveItem = (p.station ? `測点: ${p.station}` : '') || p.fileName;
       }
 
       if (!rawGroups[category]) {
@@ -321,6 +413,60 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
 
     return sortedGroups;
   }, [photos]);
+
+  // 検索フィルター（工種体系写真）
+  const filteredWorkTreeGroups = useMemo(() => {
+    if (!searchQuery) return workTreeGroups;
+    const query = searchQuery.toLowerCase();
+    const result: typeof workTreeGroups = {};
+
+    Object.entries(workTreeGroups).forEach(([wt, wtGroup]) => {
+      const matchedKinds: typeof wtGroup.kinds = {};
+      let total = 0;
+
+      Object.entries(wtGroup.kinds).forEach(([kindKey, kGroup]) => {
+        const matchedDetails: typeof kGroup.details = {};
+        let kindTotal = 0;
+
+        Object.entries(kGroup.details).forEach(([detailKey, list]) => {
+          const matched = list.filter(p =>
+            p.title.toLowerCase().includes(query) ||
+            p.station?.toLowerCase().includes(query) ||
+            p.remarks?.toLowerCase().includes(query) ||
+            p.workType?.toLowerCase().includes(query) ||
+            p.workKind?.toLowerCase().includes(query) ||
+            p.workDetail?.toLowerCase().includes(query) ||
+            wt.toLowerCase().includes(query) ||
+            (kGroup.kindName && kGroup.kindName.toLowerCase().includes(query)) ||
+            (detailKey !== '__DIRECT__' && detailKey.toLowerCase().includes(query))
+          );
+          if (matched.length > 0) {
+            matchedDetails[detailKey] = matched;
+            kindTotal += matched.length;
+          }
+        });
+
+        if (Object.keys(matchedDetails).length > 0) {
+          matchedKinds[kindKey] = {
+            kindName: kGroup.kindName,
+            totalCount: kindTotal,
+            details: matchedDetails
+          };
+          total += kindTotal;
+        }
+      });
+
+      if (Object.keys(matchedKinds).length > 0) {
+        result[wt] = {
+          workType: wtGroup.workType,
+          totalCount: total,
+          kinds: matchedKinds
+        };
+      }
+    });
+
+    return result;
+  }, [workTreeGroups, searchQuery]);
 
   // 検索フィルター（書類）
   const filteredDocGroups = useMemo(() => {
@@ -765,401 +911,521 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
         ) : (
           /* ==================== 工事写真ツリー ==================== */
           <div className="space-y-2">
-            {/* 整理軸切替ピルボタン */}
-            <div className="flex items-center gap-1 p-1 bg-slate-900/90 rounded-lg border border-slate-800 text-xs">
+            {/* 整理軸切替ピルボタン (工種体系 / 撮影日別 / 写真区分別 / 測点別) */}
+            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-900/90 rounded-lg border border-slate-800 text-xs">
               <button
-                onClick={() => setPhotoTreeMode('standard')}
-                className={`flex-1 py-1 px-1.5 rounded flex items-center justify-center gap-1 font-bold transition text-xs ${
-                  photoTreeMode === 'standard'
+                onClick={() => setPhotoTreeMode('workTree')}
+                className={`py-1 px-1.5 rounded flex items-center justify-center gap-1 font-bold transition text-xs ${
+                  photoTreeMode === 'workTree'
                     ? 'bg-blue-600 text-white shadow'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
-                title="要領基準（写真区分・工種別）"
+                title="工種 ＞ 種別 ＞ 細別（設計書・写真管理ソフト準拠）"
               >
-                <Layers className="w-3.5 h-3.5" />
-                <span>要領基準</span>
+                <FolderGit2 className="w-3.5 h-3.5 text-blue-300" />
+                <span>工種体系</span>
               </button>
               <button
                 onClick={() => setPhotoTreeMode('timeline')}
-                className={`flex-1 py-1 px-1.5 rounded flex items-center justify-center gap-1 font-bold transition text-xs ${
+                className={`py-1 px-1.5 rounded flex items-center justify-center gap-1 font-bold transition text-xs ${
                   photoTreeMode === 'timeline'
                     ? 'bg-blue-600 text-white shadow'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
                 title="撮影日別（タイムライン進捗順）"
               >
-                <Calendar className="w-3.5 h-3.5" />
+                <Calendar className="w-3.5 h-3.5 text-amber-400" />
                 <span>撮影日別</span>
               </button>
               <button
+                onClick={() => setPhotoTreeMode('category')}
+                className={`py-1 px-1.5 rounded flex items-center justify-center gap-1 font-bold transition text-xs ${
+                  photoTreeMode === 'category'
+                    ? 'bg-blue-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+                title="要領基準（写真区分別）"
+              >
+                <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                <span>写真区分別</span>
+              </button>
+              <button
                 onClick={() => setPhotoTreeMode('station')}
-                className={`flex-1 py-1 px-1.5 rounded flex items-center justify-center gap-1 font-bold transition text-xs ${
+                className={`py-1 px-1.5 rounded flex items-center justify-center gap-1 font-bold transition text-xs ${
                   photoTreeMode === 'station'
                     ? 'bg-blue-600 text-white shadow'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
                 }`}
                 title="測点別（施工箇所・キロ程順）"
               >
-                <MapPin className="w-3.5 h-3.5" />
+                <MapPin className="w-3.5 h-3.5 text-rose-400" />
                 <span>測点別</span>
               </button>
             </div>
 
-            {/* モード 1: 要領基準ツリー (写真区分 > 工種/種別 > 細別/項目 > 写真) */}
-            {photoTreeMode === 'standard' && (
-              Object.keys(filteredPhotoGroups).length === 0 ? (
-                <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
-              ) : (
-                <div className="space-y-1">
-                  {Object.entries(filteredPhotoGroups).map(([category, wtMap]) => {
-                    const catKey = `photo_cat_${category}`;
-                    const catOpen = isFolderOpen(catKey);
-                    const totalInCat = Object.values(wtMap).reduce(
-                      (acc, titles) => acc + Object.values(titles).reduce((a, l) => a + l.length, 0), 
-                      0
-                    );
+            {/* 写真アイテム共通レンダラー (見やすい写真区分バッジ・測点・タイトル) */}
+            {(() => {
+              const renderPhotoItem = (photo: PhotoItem) => {
+                const isSelected = photo.id === selectedPhotoId;
+                const rec = inspectionRecords[photo.id];
+                const badge = getPhotoCategoryBadge(photo.category);
 
-                    return (
-                      <div key={category} className="select-none">
-                        {/* 第1階層: 写真区分 */}
-                        <div
-                          onClick={() => toggleFolder(catKey)}
-                          className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
-                        >
-                          <div className="flex items-center gap-1.5 truncate">
-                            {catOpen ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            )}
-                            <Folder className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                            <span className="truncate group-hover:text-white text-xs">{category}</span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
-                            {totalInCat}
+                return (
+                  <button
+                    key={photo.id}
+                    onClick={() => onSelectPhoto(photo.id)}
+                    className={`w-full text-left p-1.5 rounded flex items-start gap-1.5 transition ${
+                      isSelected
+                        ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40 shadow-sm'
+                        : 'text-slate-400 hover:bg-slate-900 hover:text-white'
+                    }`}
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      {rec?.status === 'ok' ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : rec?.status === 'issue' ? (
+                        <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                      ) : (
+                        <ImageIcon className="w-3.5 h-3.5 text-slate-500" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded border shrink-0 ${badge.cls}`}>
+                          {badge.label}
+                        </span>
+                        {photo.station && (
+                          <span className="text-[10px] font-mono font-semibold text-amber-300 shrink-0">
+                            {photo.station}
                           </span>
-                        </div>
+                        )}
+                      </div>
+                      <div className="truncate text-xs leading-tight text-slate-200 font-medium">
+                        {photo.title || photo.fileName}
+                      </div>
+                      {photo.date && (
+                        <div className="text-[10px] text-slate-500 mt-0.5 font-mono">{photo.date} {photo.time || ''}</div>
+                      )}
+                    </div>
+                  </button>
+                );
+              };
 
-                        {/* 第2階層: 工種/種別 */}
-                        {catOpen && (
-                          <div className="ml-3 pl-2 border-l border-slate-800 space-y-1 mt-0.5">
-                            {Object.entries(wtMap).map(([workType, titles]) => {
-                              const wtKey = `photo_wt_${category}_${workType}`;
-                              const wtOpen = isFolderOpen(wtKey);
-                              const totalInWt = Object.values(titles).reduce((a, l) => a + l.length, 0);
+              return (
+                <>
+                  {/* ==================== モード 1: 工種体系ツリー (工種 > 種別 > 細別 > 写真) ==================== */}
+                  {photoTreeMode === 'workTree' && (
+                    Object.keys(filteredWorkTreeGroups).length === 0 ? (
+                      <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {Object.entries(filteredWorkTreeGroups).map(([workType, wtGroup]) => {
+                          const wtKey = `wt_${workType}`;
+                          const wtOpen = isFolderOpen(wtKey);
+                          const kindEntries = Object.entries(wtGroup.kinds);
 
-                              return (
-                                <div key={workType}>
-                                  <div
-                                    onClick={() => toggleFolder(wtKey)}
-                                    className="flex items-center justify-between p-1 rounded hover:bg-slate-900/60 cursor-pointer text-slate-300 font-medium group transition"
-                                  >
-                                    <div className="flex items-center gap-1.5 truncate">
-                                      {wtOpen ? (
-                                        <ChevronDown className="w-3 h-3 text-slate-600 shrink-0" />
-                                      ) : (
-                                        <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-                                      )}
-                                      <span className="text-xs truncate group-hover:text-slate-100">{workType}</span>
-                                    </div>
-                                    <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
-                                      {totalInWt}
-                                    </span>
-                                  </div>
+                          // 配下の最初の写真を探す
+                          const getFirstPhotoInWt = () => {
+                            for (const k of Object.values(wtGroup.kinds)) {
+                              for (const photos of Object.values(k.details)) {
+                                if (photos.length > 0) return photos[0];
+                              }
+                            }
+                            return null;
+                          };
 
-                                  {/* 第3階層: 細別/項目 */}
-                                  {wtOpen && (
-                                    <div className="ml-3 pl-2 border-l border-slate-800/60 space-y-0.5 mt-0.5">
-                                      {Object.entries(titles).map(([titleName, photoList]) => {
-                                        const titleKey = `photo_title_${category}_${workType}_${titleName}`;
-                                        const titleOpen = isFolderOpen(titleKey);
+                          return (
+                            <div key={workType} className="select-none">
+                              {/* 第1階層: 工種 (例: 擁壁工, 道路改良工) */}
+                              <div
+                                onClick={() => {
+                                  toggleFolder(wtKey);
+                                  const fp = getFirstPhotoInWt();
+                                  if (fp) onSelectPhoto(fp.id);
+                                }}
+                                className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-100 font-bold group transition"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  {wtOpen ? (
+                                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  )}
+                                  <Folder className="w-4 h-4 text-blue-400 shrink-0" />
+                                  <span className="truncate text-xs group-hover:text-white font-bold">{workType}</span>
+                                </div>
+                                <span className="text-[10px] text-blue-300 bg-blue-950/70 border border-blue-800/60 px-1.5 py-0.2 rounded-full shrink-0 font-mono">
+                                  {wtGroup.totalCount}
+                                </span>
+                              </div>
 
-                                        return (
-                                          <div key={titleName}>
-                                            <div
-                                              onClick={() => {
-                                                toggleFolder(titleKey);
-                                                if (photoList.length > 0) {
-                                                  onSelectPhoto(photoList[0].id);
-                                                }
-                                              }}
-                                              className="flex items-center justify-between p-1 rounded hover:bg-slate-900/80 cursor-pointer text-slate-400 group transition"
-                                            >
-                                              <div className="flex items-center gap-1.5 truncate">
-                                                {titleOpen ? (
-                                                  <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
-                                                ) : (
-                                                  <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                              {/* 工種配下の展開 */}
+                              {wtOpen && (
+                                <div className="ml-3 pl-2 border-l border-slate-800 space-y-1 mt-0.5">
+                                  {kindEntries.map(([kindKey, kGroup]) => {
+                                    const hasRealKind = kindKey !== '__DIRECT__' && kGroup.kindName;
+                                    const kKey = `wk_${workType}_${kindKey}`;
+                                    const kOpen = isFolderOpen(kKey);
+                                    const detailEntries = Object.entries(kGroup.details);
+
+                                    // 配下の最初の写真
+                                    const getFirstPhotoInKind = () => {
+                                      for (const photos of Object.values(kGroup.details)) {
+                                        if (photos.length > 0) return photos[0];
+                                      }
+                                      return null;
+                                    };
+
+                                    // 細別または写真のレンダラー
+                                    const renderDetails = () => (
+                                      <div className={hasRealKind ? "ml-3 pl-2 border-l border-slate-800/80 space-y-1 mt-0.5" : "space-y-1"}>
+                                        {detailEntries.map(([detailKey, photoList]) => {
+                                          const hasRealDetail = detailKey !== '__DIRECT__';
+                                          const dKey = `wd_${workType}_${kindKey}_${detailKey}`;
+                                          const dOpen = isFolderOpen(dKey);
+
+                                          if (hasRealDetail) {
+                                            return (
+                                              <div key={detailKey}>
+                                                {/* 第3階層: 細別 (例: 基礎砕石工, 鉄筋工, コンクリート打設) */}
+                                                <div
+                                                  onClick={() => {
+                                                    toggleFolder(dKey);
+                                                    if (photoList.length > 0) onSelectPhoto(photoList[0].id);
+                                                  }}
+                                                  className="flex items-center justify-between p-1 rounded hover:bg-slate-900/80 cursor-pointer text-slate-300 font-medium group transition"
+                                                >
+                                                  <div className="flex items-center gap-1.5 truncate">
+                                                    {dOpen ? (
+                                                      <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
+                                                    ) : (
+                                                      <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                                                    )}
+                                                    <Tag className="w-3 h-3 text-emerald-400 shrink-0" />
+                                                    <span className="text-xs truncate group-hover:text-slate-100 font-medium">
+                                                      {detailKey}
+                                                    </span>
+                                                  </div>
+                                                  <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0 font-mono">
+                                                    {photoList.length}
+                                                  </span>
+                                                </div>
+
+                                                {/* 写真リスト */}
+                                                {dOpen && (
+                                                  <div className="ml-3 pl-2 border-l border-slate-800/60 space-y-0.5 mt-0.5">
+                                                    {photoList.map(renderPhotoItem)}
+                                                  </div>
                                                 )}
-                                                <Tag className="w-3 h-3 text-emerald-400 shrink-0" />
-                                                <span className="text-xs font-medium truncate group-hover:text-slate-200">
-                                                  {titleName}
-                                                </span>
                                               </div>
-                                              <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
-                                                {photoList.length}
+                                            );
+                                          }
+
+                                          // 細別がない場合は直接写真リストを展開
+                                          return (
+                                            <div key={detailKey} className="space-y-0.5">
+                                              {photoList.map(renderPhotoItem)}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+
+                                    // 種別がある場合: 第2階層として種別フォルダを描画 (例: 重力式擁壁, L型擁壁)
+                                    if (hasRealKind) {
+                                      return (
+                                        <div key={kindKey}>
+                                          <div
+                                            onClick={() => {
+                                              toggleFolder(kKey);
+                                              const fp = getFirstPhotoInKind();
+                                              if (fp) onSelectPhoto(fp.id);
+                                            }}
+                                            className="flex items-center justify-between p-1 rounded hover:bg-slate-900/70 cursor-pointer text-slate-200 font-semibold group transition"
+                                          >
+                                            <div className="flex items-center gap-1.5 truncate">
+                                              {kOpen ? (
+                                                <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
+                                              ) : (
+                                                <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                                              )}
+                                              <FolderGit2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                              <span className="text-xs truncate group-hover:text-white font-semibold">
+                                                {kGroup.kindName}
                                               </span>
                                             </div>
-
-                                            {/* 第4階層: 写真アイテム */}
-                                            {titleOpen && (
-                                              <div className="ml-3 pl-2 border-l border-slate-800/40 space-y-0.5 mt-0.5">
-                                                {photoList.map((photo) => {
-                                                  const isSelected = photo.id === selectedPhotoId;
-                                                  const rec = inspectionRecords[photo.id];
-
-                                                  return (
-                                                    <button
-                                                      key={photo.id}
-                                                      onClick={() => onSelectPhoto(photo.id)}
-                                                      className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
-                                                        isSelected
-                                                          ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
-                                                          : 'text-slate-400 hover:bg-slate-900 hover:text-white'
-                                                      }`}
-                                                    >
-                                                      <div className="mt-0.5 shrink-0">
-                                                        {rec?.status === 'ok' ? (
-                                                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                                                        ) : rec?.status === 'issue' ? (
-                                                          <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                                                        ) : (
-                                                          <ImageIcon className="w-3.5 h-3.5 text-slate-500" />
-                                                        )}
-                                                      </div>
-                                                      <div className="min-w-0 flex-1">
-                                                        <div className="truncate text-xs leading-tight text-slate-300 font-medium">
-                                                          {photo.station || photo.fileName}
-                                                        </div>
-                                                        {photo.date && (
-                                                          <div className="text-[10px] text-slate-500">{photo.date}</div>
-                                                        )}
-                                                      </div>
-                                                    </button>
-                                                  );
-                                                })}
-                                              </div>
-                                            )}
+                                            <span className="text-[10px] text-slate-400 bg-slate-900 px-1.5 py-0.2 rounded shrink-0 font-mono">
+                                              {kGroup.totalCount}
+                                            </span>
                                           </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
+
+                                          {kOpen && renderDetails()}
+                                        </div>
+                                      );
+                                    }
+
+                                    // 種別がない場合はスマートスキップして細別または写真を直接描画
+                                    return <div key={kindKey}>{renderDetails()}</div>;
+                                  })}
                                 </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
-              )
-            )}
+                    )
+                  )}
 
-            {/* モード 2: 撮影日別（タイムライン）ツリー (年月 > 撮影日 > 写真) */}
-            {photoTreeMode === 'timeline' && (
-              Object.keys(filteredTimelineGroups).length === 0 ? (
-                <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
-              ) : (
-                <div className="space-y-1">
-                  {Object.entries(filteredTimelineGroups).map(([ym, dateMap]) => {
-                    const ymKey = `photo_ym_${ym}`;
-                    const ymOpen = isFolderOpen(ymKey);
-                    const totalInYm = Object.values(dateMap).reduce((a, l) => a + l.length, 0);
+                  {/* ==================== モード 2: 撮影日別（タイムライン）ツリー ==================== */}
+                  {photoTreeMode === 'timeline' && (
+                    Object.keys(filteredTimelineGroups).length === 0 ? (
+                      <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {Object.entries(filteredTimelineGroups).map(([ym, dateMap]) => {
+                          const ymKey = `photo_ym_${ym}`;
+                          const ymOpen = isFolderOpen(ymKey);
+                          const totalInYm = Object.values(dateMap).reduce((a, l) => a + l.length, 0);
 
-                    return (
-                      <div key={ym} className="select-none">
-                        {/* 第1階層: 年月 */}
-                        <div
-                          onClick={() => toggleFolder(ymKey)}
-                          className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
-                        >
-                          <div className="flex items-center gap-1.5 truncate">
-                            {ymOpen ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            )}
-                            <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                            <span className="truncate group-hover:text-white text-xs">{ym}</span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
-                            {totalInYm}
-                          </span>
-                        </div>
-
-                        {/* 第2階層: 撮影日 (クリックで1枚目即時選択) */}
-                        {ymOpen && (
-                          <div className="ml-3 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
-                            {Object.entries(dateMap).map(([dateStr, photoList]) => {
-                              const dKey = `photo_date_${ym}_${dateStr}`;
-                              const dOpen = isFolderOpen(dKey);
-
-                              return (
-                                <div key={dateStr}>
-                                  <div
-                                    onClick={() => {
-                                      toggleFolder(dKey);
-                                      if (photoList.length > 0) {
-                                        onSelectPhoto(photoList[0].id);
-                                      }
-                                    }}
-                                    className="flex items-center justify-between p-1 rounded hover:bg-slate-900/70 cursor-pointer text-slate-300 font-medium group transition"
-                                  >
-                                    <div className="flex items-center gap-1.5 truncate">
-                                      {dOpen ? (
-                                        <ChevronDown className="w-3 h-3 text-slate-600 shrink-0" />
-                                      ) : (
-                                        <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-                                      )}
-                                      <Clock className="w-3 h-3 text-cyan-400 shrink-0" />
-                                      <span className="text-xs truncate font-mono group-hover:text-slate-100">
-                                        {dateStr}
-                                      </span>
-                                    </div>
-                                    <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
-                                      {photoList.length}
-                                    </span>
-                                  </div>
-
-                                  {/* 第3階層: 写真リスト */}
-                                  {dOpen && (
-                                    <div className="ml-3 pl-2 border-l border-slate-800/40 space-y-0.5 mt-0.5">
-                                      {photoList.map((photo) => {
-                                        const isSelected = photo.id === selectedPhotoId;
-                                        const rec = inspectionRecords[photo.id];
-
-                                        return (
-                                          <button
-                                            key={photo.id}
-                                            onClick={() => onSelectPhoto(photo.id)}
-                                            className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
-                                              isSelected
-                                                ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
-                                                : 'text-slate-400 hover:bg-slate-900 hover:text-white'
-                                            }`}
-                                          >
-                                            <div className="mt-0.5 shrink-0">
-                                              {rec?.status === 'ok' ? (
-                                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                                              ) : rec?.status === 'issue' ? (
-                                                <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                                              ) : (
-                                                <ImageIcon className="w-3.5 h-3.5 text-slate-500" />
-                                              )}
-                                            </div>
-                                            <div className="min-w-0 flex-1">
-                                              <div className="truncate text-xs leading-tight text-slate-300 font-medium">
-                                                {photo.title || photo.fileName}
-                                              </div>
-                                              <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                                                {photo.station && <span className="text-amber-400/90">{photo.station}</span>}
-                                                {photo.workType && <span>{photo.workType}</span>}
-                                                {photo.time && <span>{photo.time}</span>}
-                                              </div>
-                                            </div>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
+                          return (
+                            <div key={ym} className="select-none">
+                              {/* 第1階層: 年月 */}
+                              <div
+                                onClick={() => toggleFolder(ymKey)}
+                                className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  {ymOpen ? (
+                                    <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                                   )}
+                                  <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  <span className="truncate group-hover:text-white text-xs">{ym}</span>
                                 </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                                <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
+                                  {totalInYm}
+                                </span>
+                              </div>
+
+                              {/* 第2階層: 撮影日 (クリックで1枚目即時選択) */}
+                              {ymOpen && (
+                                <div className="ml-3 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
+                                  {Object.entries(dateMap).map(([dateStr, photoList]) => {
+                                    const dKey = `photo_date_${ym}_${dateStr}`;
+                                    const dOpen = isFolderOpen(dKey);
+
+                                    return (
+                                      <div key={dateStr}>
+                                        <div
+                                          onClick={() => {
+                                            toggleFolder(dKey);
+                                            if (photoList.length > 0) onSelectPhoto(photoList[0].id);
+                                          }}
+                                          className="flex items-center justify-between p-1 rounded hover:bg-slate-900/70 cursor-pointer text-slate-300 font-medium group transition"
+                                        >
+                                          <div className="flex items-center gap-1.5 truncate">
+                                            {dOpen ? (
+                                              <ChevronDown className="w-3 h-3 text-slate-600 shrink-0" />
+                                            ) : (
+                                              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+                                            )}
+                                            <Clock className="w-3 h-3 text-cyan-400 shrink-0" />
+                                            <span className="text-xs truncate font-mono group-hover:text-slate-100">
+                                              {dateStr}
+                                            </span>
+                                          </div>
+                                          <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
+                                            {photoList.length}
+                                          </span>
+                                        </div>
+
+                                        {/* 第3階層: 写真リスト */}
+                                        {dOpen && (
+                                          <div className="ml-3 pl-2 border-l border-slate-800/40 space-y-0.5 mt-0.5">
+                                            {photoList.map(renderPhotoItem)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
-              )
-            )}
+                    )
+                  )}
 
-            {/* モード 3: 測点別ツリー (測点 > 写真) */}
-            {photoTreeMode === 'station' && (
-              Object.keys(filteredStationGroups).length === 0 ? (
-                <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
-              ) : (
-                <div className="space-y-1">
-                  {Object.entries(filteredStationGroups).map(([stationName, photoList]) => {
-                    const stKey = `photo_st_${stationName}`;
-                    const stOpen = isFolderOpen(stKey);
+                  {/* ==================== モード 3: 写真区分別ツリー (要領基準) ==================== */}
+                  {photoTreeMode === 'category' && (
+                    Object.keys(filteredPhotoGroups).length === 0 ? (
+                      <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {Object.entries(filteredPhotoGroups).map(([category, wtMap]) => {
+                          const catKey = `photo_cat_${category}`;
+                          const catOpen = isFolderOpen(catKey);
+                          const totalInCat = Object.values(wtMap).reduce(
+                            (acc, titles) => acc + Object.values(titles).reduce((a, l) => a + l.length, 0), 
+                            0
+                          );
 
-                    return (
-                      <div key={stationName} className="select-none">
-                        {/* 第1階層: 測点 (クリックで1枚目即時選択) */}
-                        <div
-                          onClick={() => {
-                            toggleFolder(stKey);
-                            if (photoList.length > 0) {
-                              onSelectPhoto(photoList[0].id);
-                            }
-                          }}
-                          className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
-                        >
-                          <div className="flex items-center gap-1.5 truncate">
-                            {stOpen ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            )}
-                            <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                            <span className="truncate group-hover:text-white text-xs font-mono">
-                              {stationName}
-                            </span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
-                            {photoList.length}
-                          </span>
-                        </div>
+                          return (
+                            <div key={category} className="select-none">
+                              {/* 第1階層: 写真区分 */}
+                              <div
+                                onClick={() => toggleFolder(catKey)}
+                                className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  {catOpen ? (
+                                    <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  )}
+                                  <Folder className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                                  <span className="truncate group-hover:text-white text-xs">{category}</span>
+                                </div>
+                                <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
+                                  {totalInCat}
+                                </span>
+                              </div>
 
-                        {/* 第2階層: 写真リスト */}
-                        {stOpen && (
-                          <div className="ml-3 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
-                            {photoList.map((photo) => {
-                              const isSelected = photo.id === selectedPhotoId;
-                              const rec = inspectionRecords[photo.id];
+                              {/* 第2階層: 工種 */}
+                              {catOpen && (
+                                <div className="ml-3 pl-2 border-l border-slate-800 space-y-1 mt-0.5">
+                                  {Object.entries(wtMap).map(([workType, titles]) => {
+                                    const wtKey = `photo_wt_${category}_${workType}`;
+                                    const wtOpen = isFolderOpen(wtKey);
+                                    const totalInWt = Object.values(titles).reduce((a, l) => a + l.length, 0);
 
-                              return (
-                                <button
-                                  key={photo.id}
-                                  onClick={() => onSelectPhoto(photo.id)}
-                                  className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
-                                    isSelected
-                                      ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
-                                      : 'text-slate-400 hover:bg-slate-900 hover:text-white'
-                                  }`}
-                                >
-                                  <div className="mt-0.5 shrink-0">
-                                    {rec?.status === 'ok' ? (
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                                    ) : rec?.status === 'issue' ? (
-                                      <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                                    ) : (
-                                      <ImageIcon className="w-3.5 h-3.5 text-slate-500" />
-                                    )}
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="truncate text-xs leading-tight text-slate-300 font-medium">
-                                      {photo.title || photo.fileName}
-                                    </div>
-                                    <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                                      {photo.workType && <span>{photo.workType}</span>}
-                                      {photo.date && <span>{photo.date}</span>}
-                                    </div>
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
+                                    return (
+                                      <div key={workType}>
+                                        <div
+                                          onClick={() => toggleFolder(wtKey)}
+                                          className="flex items-center justify-between p-1 rounded hover:bg-slate-900/60 cursor-pointer text-slate-300 font-medium group transition"
+                                        >
+                                          <div className="flex items-center gap-1.5 truncate">
+                                            {wtOpen ? (
+                                              <ChevronDown className="w-3 h-3 text-slate-600 shrink-0" />
+                                            ) : (
+                                              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+                                            )}
+                                            <span className="text-xs truncate group-hover:text-slate-100">{workType}</span>
+                                          </div>
+                                          <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
+                                            {totalInWt}
+                                          </span>
+                                        </div>
+
+                                        {/* 第3階層: 細別/項目 */}
+                                        {wtOpen && (
+                                          <div className="ml-3 pl-2 border-l border-slate-800/60 space-y-0.5 mt-0.5">
+                                            {Object.entries(titles).map(([titleName, photoList]) => {
+                                              const titleKey = `photo_title_${category}_${workType}_${titleName}`;
+                                              const titleOpen = isFolderOpen(titleKey);
+
+                                              return (
+                                                <div key={titleName}>
+                                                  <div
+                                                    onClick={() => {
+                                                      toggleFolder(titleKey);
+                                                      if (photoList.length > 0) onSelectPhoto(photoList[0].id);
+                                                    }}
+                                                    className="flex items-center justify-between p-1 rounded hover:bg-slate-900/80 cursor-pointer text-slate-400 group transition"
+                                                  >
+                                                    <div className="flex items-center gap-1.5 truncate">
+                                                      {titleOpen ? (
+                                                        <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
+                                                      ) : (
+                                                        <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                                                      )}
+                                                      <Tag className="w-3 h-3 text-emerald-400 shrink-0" />
+                                                      <span className="text-xs font-medium truncate group-hover:text-slate-200">
+                                                        {titleName}
+                                                      </span>
+                                                    </div>
+                                                    <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.2 rounded shrink-0">
+                                                      {photoList.length}
+                                                    </span>
+                                                  </div>
+
+                                                  {/* 写真リスト */}
+                                                  {titleOpen && (
+                                                    <div className="ml-3 pl-2 border-l border-slate-800/40 space-y-0.5 mt-0.5">
+                                                      {photoList.map(renderPhotoItem)}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
-              )
-            )}
+                    )
+                  )}
+
+                  {/* ==================== モード 4: 測点別ツリー ==================== */}
+                  {photoTreeMode === 'station' && (
+                    Object.keys(filteredStationGroups).length === 0 ? (
+                      <div className="p-4 text-center text-slate-500 text-xs">該当する写真がありません</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {Object.entries(filteredStationGroups).map(([stationName, photoList]) => {
+                          const stKey = `photo_st_${stationName}`;
+                          const stOpen = isFolderOpen(stKey);
+
+                          return (
+                            <div key={stationName} className="select-none">
+                              {/* 第1階層: 測点 (クリックで1枚目即時選択) */}
+                              <div
+                                onClick={() => {
+                                  toggleFolder(stKey);
+                                  if (photoList.length > 0) onSelectPhoto(photoList[0].id);
+                                }}
+                                className="flex items-center justify-between p-1.5 rounded hover:bg-slate-900 cursor-pointer text-slate-200 font-semibold group transition"
+                              >
+                                <div className="flex items-center gap-1.5 truncate">
+                                  {stOpen ? (
+                                    <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  )}
+                                  <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                  <span className="truncate group-hover:text-white text-xs font-mono">
+                                    {stationName}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
+                                  {photoList.length}
+                                </span>
+                              </div>
+
+                              {/* 第2階層: 写真リスト */}
+                              {stOpen && (
+                                <div className="ml-3 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
+                                  {photoList.map(renderPhotoItem)}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
       </div>

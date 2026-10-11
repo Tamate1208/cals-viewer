@@ -560,6 +560,16 @@ export function parsePhotoXml(xmlString: string): PhotoItem[] {
       }
     }
 
+    // 重複階層の解消（写真管理ソフトによる「工種:擁壁工 / 種別:擁壁工 / 細別:擁壁工」の同名重複を排除）
+    if (workKind === workType) workKind = '';
+    if (workDetail === workKind || workDetail === workType) workDetail = '';
+
+    // 工種が未設定で種別がある場合の昇格
+    if (!workType && workKind) {
+      workType = workKind;
+      workKind = '';
+    }
+
     // 救出後の工種・種別・細別・測点を小黒板リストに整合追加
     if (workType && !blackboardItems.some(i => i.name === '工種')) blackboardItems.unshift({ name: '工種', value: workType });
     if (workKind && !blackboardItems.some(i => i.name === '種別')) blackboardItems.push({ name: '種別', value: workKind });
