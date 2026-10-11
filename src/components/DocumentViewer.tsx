@@ -1,11 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { 
   CheckCircle2, 
   AlertCircle, 
   FileText, 
-  FolderGit2, 
   ExternalLink, 
-  Search, 
   FileSpreadsheet,
   Download,
   Compass
@@ -21,8 +19,6 @@ interface DocumentViewerProps {
   selectedDrawingId?: string | null;
   activeTab?: 'reports' | 'drawings' | 'index';
   inspectionRecords: Record<string, InspectionRecord>;
-  onSelectReport?: (id: string) => void;
-  onSelectDrawing?: (id: string) => void;
   onActiveTabChange?: (tab: 'reports' | 'drawings' | 'index') => void;
   onUpdateInspection: (record: InspectionRecord) => void;
 }
@@ -35,47 +31,19 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   selectedDrawingId: controlledDrawingId,
   activeTab = 'reports',
   inspectionRecords,
-  onSelectReport,
-  onSelectDrawing,
   onUpdateInspection,
 }) => {
-  const [internalReportId, setInternalReportId] = useState<string | null>(reports[0]?.id || null);
-  const [internalDrawingId, setInternalDrawingId] = useState<string | null>(drawings[0]?.id || null);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  const selectedReportId = controlledReportId !== undefined ? controlledReportId : internalReportId;
-  const setSelectedReportId = (id: string) => {
-    setInternalReportId(id);
-    onSelectReport?.(id);
-  };
-
-  const selectedDrawingId = controlledDrawingId !== undefined ? controlledDrawingId : internalDrawingId;
-  const setSelectedDrawingId = (id: string) => {
-    setInternalDrawingId(id);
-    onSelectDrawing?.(id);
-  };
+  const selectedReportId = controlledReportId || reports[0]?.id || null;
+  const selectedDrawingId = controlledDrawingId || drawings[0]?.id || null;
 
   // 選択中のアイテム
   const currentReport = reports.find(r => r.id === selectedReportId) || reports[0];
   const currentDrawing = drawings.find(d => d.id === selectedDrawingId) || drawings[0];
 
-
   // 現在表示中の対象
   const currentItem = activeTab === 'reports' ? currentReport : activeTab === 'drawings' ? currentDrawing : null;
   const currentItemId = currentItem ? currentItem.id : null;
   const currentRecord = currentItemId ? inspectionRecords[currentItemId] : undefined;
-
-  // 検索フィルター
-  const filteredReports = reports.filter(r => 
-    r.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    r.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (r.summary && r.summary.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
-  const filteredDrawings = drawings.filter(d =>
-    d.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    d.type.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   // 検査ステータス更新
   const handleSetStatus = (status: 'ok' | 'issue') => {
@@ -159,120 +127,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           </div>
         </div>
       ) : (
-        /* 報告書 または 図面ペイン */
-        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-          {/* 書類一覧サイドバー */}
-          <div className="w-full md:w-56 lg:w-64 bg-slate-950/60 border-b md:border-b-0 md:border-r border-slate-800 flex flex-col shrink-0 h-48 md:h-full overflow-hidden">
-            {/* 検索入力 */}
-            <div className="p-2 border-b border-slate-800 shrink-0">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
-                <input
-                  type="text"
-                  placeholder="書類名を検索..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-2 py-1.5 bg-slate-900 border border-slate-800 rounded-md text-xs text-slate-200 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            {/* 一覧スクロールリスト */}
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-800/50">
-              {activeTab === 'reports' ? (
-                filteredReports.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-slate-500">該当する書類がありません</div>
-                ) : (
-                  filteredReports.map((report) => {
-                    const isSelected = report.id === currentReport?.id;
-                    const rec = inspectionRecords[report.id];
-                    return (
-                      <button
-                        key={report.id}
-                        onClick={() => setSelectedReportId(report.id)}
-                        className={`w-full text-left p-2.5 transition flex items-start gap-2 ${
-                          isSelected 
-                            ? 'bg-blue-600/15 border-l-2 border-blue-500 text-slate-100' 
-                            : 'hover:bg-slate-900/60 text-slate-300'
-                        }`}
-                      >
-                        <div className="mt-0.5 shrink-0">
-                          {rec?.status === 'ok' ? (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : rec?.status === 'issue' ? (
-                            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                          ) : (
-                            <FileText className="w-3.5 h-3.5 text-slate-500" />
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium leading-snug line-clamp-2">
-                            {report.fileRole && (
-                              <span className={`inline-block mr-1 text-[10px] px-1.5 py-0.2 rounded font-semibold ${
-                                report.fileRole === '鑑' 
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
-                                  : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                              }`}>
-                                {report.fileRole}
-                              </span>
-                            )}
-                            {report.title}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-1 text-[10px] text-slate-400">
-                            <span className="bg-slate-800 px-1.5 py-0.2 rounded text-slate-400">{report.type}</span>
-                            {report.createDate && <span>{report.createDate}</span>}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })
-                )
-              ) : (
-                filteredDrawings.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-slate-500">該当する図面がありません</div>
-                ) : (
-                  filteredDrawings.map((drawing) => {
-                    const isSelected = drawing.id === currentDrawing?.id;
-                    const rec = inspectionRecords[drawing.id];
-                    return (
-                      <button
-                        key={drawing.id}
-                        onClick={() => setSelectedDrawingId(drawing.id)}
-                        className={`w-full text-left p-2.5 transition flex items-start gap-2 ${
-                          isSelected 
-                            ? 'bg-blue-600/15 border-l-2 border-blue-500 text-slate-100' 
-                            : 'hover:bg-slate-900/60 text-slate-300'
-                        }`}
-                      >
-                        <div className="mt-0.5 shrink-0">
-                          {rec?.status === 'ok' ? (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : rec?.status === 'issue' ? (
-                            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                          ) : (
-                            <FolderGit2 className="w-3.5 h-3.5 text-slate-500" />
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium leading-snug line-clamp-2">
-                            {drawing.title}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-1 text-[10px] text-slate-400">
-                            <span className="bg-slate-800 px-1.5 py-0.2 rounded text-slate-400">{drawing.type}</span>
-                            {drawing.scale && <span>縮尺 {drawing.scale}</span>}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })
-                )
-              )}
-            </div>
-          </div>
-
-          {/* プレビュー ＆ 検査アクション領域 */}
-          <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
-            {currentItem ? (
+        /* 報告書 または 図面ペイン (一覧サイドバーを廃止し全幅プレビュー表示) */
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
+          {currentItem ? (
               <>
                 {/* プレビュー上部ヘッダー */}
                 <div className="p-2.5 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
@@ -417,7 +274,6 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
               </div>
             )}
           </div>
-        </div>
       )}
     </div>
   );

@@ -151,8 +151,6 @@ export const App: React.FC = () => {
                   selectedDrawingId={selectedDrawingId}
                   activeTab={docTab}
                   inspectionRecords={inspectionRecords}
-                  onSelectReport={setSelectedReportId}
-                  onSelectDrawing={setSelectedDrawingId}
                   onActiveTabChange={setDocTab}
                   onUpdateInspection={handleUpdateInspection}
                 />
