@@ -260,7 +260,7 @@ export function parseXmlString(xmlString: string): Document {
 
 /**
  * INDEX_C.XML または INDEX_D.XML のパース
- * 国土交通省・広島県電子納品基準の日本語タグ（INDE_C06.DTD等）および英語タグの両方に対応
+ * 国土交通省・地方自治体(GioV)電子納品基準の日本語タグ（INDE_C06.DTD等）および英語タグの両方に対応
  */
 export function parseIndexXml(xmlString: string): ConstructionInfo {
   const doc = parseXmlString(xmlString);
@@ -291,7 +291,7 @@ export function parseIndexXml(xmlString: string): ConstructionInfo {
   if (!clientName) {
     clientName = getElementText(root, '発注者名', '発注者', '発注者-大分類', 'client_name', 'orderer_name', 'client');
   }
-  if (!clientName) clientName = '広島県';
+  if (!clientName) clientName = 'GioV';
 
   // 4. 請負者・受注者名称 (<受注者情報> 配下の <受注者名>)
   let contractorName = '';

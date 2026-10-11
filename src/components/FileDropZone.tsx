@@ -177,7 +177,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         {/* タイトルバッジ */}
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-900/40 border border-blue-500/40 text-blue-300 text-xs font-semibold mb-4">
           <ShieldCheck className="w-4 h-4 text-blue-400" />
-          <span>広島県土木公共工事 電子納品検査支援アプリ (スタンドアロン版)</span>
+          <span>GioV 土木公共工事 電子納品検査支援アプリ (スタンドアロン版)</span>
         </div>
 
         <h2 className="text-2xl sm:text-3xl font-extrabold text-white text-center mb-2 tracking-tight">
@@ -206,7 +206,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             フォルダまたはZIPファイルをここにドラッグ＆ドロップ
           </h3>
           <p className="text-xs text-slate-400 mb-6">
-            国土交通省・広島県基準の INDEX_C.XML / PHOTO / REPORT / DRAWING フォルダに対応
+            国土交通省・地方自治体(GioV)基準の INDEX_C.XML / PHOTO / REPORT / DRAWING フォルダに対応
           </p>
 
           {/* ボタン2種 */}
@@ -248,7 +248,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-600/50 text-emerald-300 text-xs font-semibold shadow transition active:scale-95 cursor-pointer"
           >
             <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span>広島県 道路改良工事のサンプルデータで試す</span>
+            <span>GioV 道路改良工事のサンプルデータで試す</span>
           </button>
         </div>
 
@@ -272,7 +272,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div>
               <div className="font-semibold text-slate-200 mb-0.5">Shift-JIS / UTF-8 自動判別</div>
-              <div>広島県及び国交省の電子納品基準で多用されるShift-JIS XMLを自動判別して正常表示。</div>
+              <div>国交省および自治体(GioV)の電子納品基準で多用されるShift-JIS XMLを自動判別して正常表示。</div>
             </div>
           </div>
         </div>

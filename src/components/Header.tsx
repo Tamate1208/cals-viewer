@@ -50,7 +50,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex items-center gap-2 bg-blue-600/30 text-blue-400 border border-blue-500/40 px-2.5 py-1 rounded text-xs font-semibold tracking-wide shrink-0">
             <ShieldCheck className="w-4 h-4 text-blue-400" />
-            <span>広島県 電子納品検査</span>
+            <span>GioV 電子納品検査</span>
           </div>
           <div className="truncate">
             <h1 className="text-base sm:text-lg font-bold text-white tracking-tight truncate flex items-center gap-2">
@@ -129,7 +129,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-1 text-slate-300">
             <Building2 className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-slate-400">発注:</span>
-            <span className="font-medium text-slate-200">{constructionInfo.clientName || '広島県'}</span>
+            <span className="font-medium text-slate-200">{constructionInfo.clientName || 'GioV / 発注者'}</span>
           </div>
           <div className="flex items-center gap-1 text-slate-300">
             <UserCheck className="w-3.5 h-3.5 text-slate-400" />

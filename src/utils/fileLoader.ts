@@ -252,7 +252,7 @@ async function processIndex(
   let constructionInfo = {
     constructionName: folderName,
     lineRiverName: '',
-    clientName: '広島県',
+    clientName: 'GioV',
     contractorName: '',
     contractNumber: '',
     startDate: '',
@@ -283,7 +283,7 @@ async function processIndex(
           constructionInfo.constructionName = parsed.constructionName;
         }
         if (parsed.lineRiverName) constructionInfo.lineRiverName = parsed.lineRiverName;
-        if (parsed.clientName && parsed.clientName !== '広島県') constructionInfo.clientName = parsed.clientName;
+        if (parsed.clientName && parsed.clientName !== 'GioV') constructionInfo.clientName = parsed.clientName;
         if (parsed.contractorName && parsed.contractorName !== '（施工業者未設定）') constructionInfo.contractorName = parsed.contractorName;
         if (parsed.contractNumber) constructionInfo.contractNumber = parsed.contractNumber;
         if (parsed.startDate) constructionInfo.startDate = parsed.startDate;

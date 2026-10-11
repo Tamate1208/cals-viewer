@@ -34,7 +34,7 @@ function createMockPhotoDataUrl(
     <rect width="320" height="220" rx="8" fill="#1b4332" stroke="#d8f3dc" stroke-width="3" filter="drop-shadow(2px 4px 6px rgba(0,0,0,0.5))"/>
     <rect x="6" y="6" width="308" height="208" rx="4" fill="none" stroke="#2d6a4f" stroke-width="2"/>
     
-    <text x="160" y="32" font-family="sans-serif" font-size="16" fill="#fff" font-weight="bold" text-anchor="middle">電子小黒板 (広島県仕様)</text>
+    <text x="160" y="32" font-family="sans-serif" font-size="16" fill="#fff" font-weight="bold" text-anchor="middle">電子小黒板 (GioV仕様)</text>
     <line x1="10" y1="42" x2="310" y2="42" stroke="#52b788" stroke-width="1.5"/>
 
     <text x="16" y="66" font-family="sans-serif" font-size="14" fill="#95d5b2">工事名:</text>
@@ -85,7 +85,7 @@ function createMockDocDataUrl(docTitle: string, docNumber: string, contentLines:
 <body>
   <div class="header">
     <div>
-      <div style="font-size:12px; color:#2563eb; font-weight:bold;">広島県電子納品基準準拠 帳票</div>
+      <div style="font-size:12px; color:#2563eb; font-weight:bold;">GioV 電子納品基準準拠 帳票</div>
       <div class="title">${docTitle}</div>
     </div>
     <div class="meta">
@@ -96,7 +96,7 @@ function createMockDocDataUrl(docTitle: string, docNumber: string, contentLines:
   </div>
 
   <div class="box">
-    <strong>【発注者】</strong> 広島県西部建設事務所 道路整備課<br>
+    <strong>【発注者】</strong> GioV建設事務所 道路整備課<br>
     <strong>【受注者】</strong> 株式会社安芸建設（現場代理人・監理技術者）
   </div>
 
@@ -129,14 +129,14 @@ function createMockDocDataUrl(docTitle: string, docNumber: string, contentLines:
 }
 
 /**
- * 広島県公共工事の模擬電子納品データセット
+ * GioV 公共工事の模擬電子納品データセット
  */
 export function getSampleHiroshimaDataset(): DeliveryDataset {
   return {
     constructionInfo: {
       constructionName: '一般国道487号 道路改良工事（交付金）',
       lineRiverName: '一般国道487号',
-      clientName: '広島県西部建設事務所',
+      clientName: 'GioV建設事務所',
       contractorName: '株式会社安芸建設',
       contractNumber: '第 26-03487 号',
       startDate: '2026-04-01',
@@ -352,7 +352,7 @@ export function getSampleHiroshimaDataset(): DeliveryDataset {
             '件名: 重力式擁壁基礎地盤 平板載荷試験 立会確認',
             '立会日時: 2026年05月15日 10:00〜',
             '試験結果: 極限支持力 qu=480 kN/㎡、長期許容支持力 qa=160 kN/㎡（設計基準 150 kN/㎡ 以上満足）',
-            '立会確認者: 広島県西部建設事務所 監督員 / 受注者 監理技術者',
+            '立会確認者: GioV建設事務所 監督員 / 受注者 監理技術者',
           ]
         ),
       },
@@ -436,6 +436,6 @@ export function getSampleHiroshimaDataset(): DeliveryDataset {
     ],
     otherFiles: [],
     loadedAt: new Date().toLocaleString('ja-JP'),
-    folderName: '【広島県】一般国道487号_電子納品サンプル',
+    folderName: '【GioV】一般国道487号_電子納品サンプル',
   };
 }
