@@ -7,12 +7,14 @@ import { DocumentViewer } from './components/DocumentViewer';
 import { PhotoViewer } from './components/PhotoViewer';
 import { InspectionTreeNav } from './components/InspectionTreeNav';
 import { InspectionReportView } from './components/InspectionReportView';
-import { FileText, Image as ImageIcon, ArrowRight, ShieldCheck } from 'lucide-react';
+import { SubWindowPortal } from './components/SubWindowPortal';
+import { FileText, Image as ImageIcon, ArrowRight, ShieldCheck, ExternalLink } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [dataset, setDataset] = useState<DeliveryDataset | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'doc-only' | 'photo-only'>('doc-only');
+  const [subWindowMode, setSubWindowMode] = useState<'doc-only' | 'photo-only' | null>(null);
   const [showModeSelectModal, setShowModeSelectModal] = useState(false);
   const [inspectionRecords, setInspectionRecords] = useState<Record<string, InspectionRecord>>({});
   const [showReportModal, setShowReportModal] = useState(false);
@@ -96,6 +98,16 @@ export const App: React.FC = () => {
   const hasDocs = !!dataset && (dataset.reports.length > 0 || dataset.drawings.length > 0);
   const hasPhotos = !!dataset && dataset.photos.length > 0;
 
+  // 別窓（サブウィンドウ）の開閉トグル
+  const handleToggleSubWindow = () => {
+    if (subWindowMode) {
+      setSubWindowMode(null);
+    } else {
+      // 現在の viewMode の相手側を別窓で開く
+      setSubWindowMode(viewMode === 'doc-only' ? 'photo-only' : 'doc-only');
+    }
+  };
+
   // 合計点検対象数
   const totalItemsCount = (dataset?.photos.length || 0) + (dataset?.reports.length || 0) + (dataset?.drawings.length || 0);
 
@@ -119,6 +131,8 @@ export const App: React.FC = () => {
             onOpenReportModal={() => setShowReportModal(true)}
             hasDocs={hasDocs}
             hasPhotos={hasPhotos}
+            onToggleSubWindow={handleToggleSubWindow}
+            isSubWindowOpen={!!subWindowMode}
           />
 
           <main className="flex-1 flex overflow-hidden">
@@ -190,28 +204,28 @@ export const App: React.FC = () => {
                   読み込みデータ内に【書類・図面】と【工事写真】の両方が見つかりました。どちらの検査から開始しますか？
                 </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
                   {/* 書類・図面で起動 */}
                   <button
                     onClick={() => {
                       setViewMode('doc-only');
                       setShowModeSelectModal(false);
                     }}
-                    className="p-5 rounded-xl bg-slate-800/90 hover:bg-blue-950/40 border border-slate-700 hover:border-blue-500 text-left transition flex flex-col justify-between group shadow-lg cursor-pointer"
+                    className="p-4 rounded-xl bg-slate-800/90 hover:bg-blue-950/40 border border-slate-700 hover:border-blue-500 text-left transition flex flex-col justify-between group shadow-lg cursor-pointer"
                   >
                     <div>
-                      <div className="w-10 h-10 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center mb-3 group-hover:scale-110 transition">
+                      <div className="w-9 h-9 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center mb-2.5 group-hover:scale-110 transition">
                         <FileText className="w-5 h-5" />
                       </div>
-                      <h4 className="text-base font-bold text-white mb-1 flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-white mb-1 flex items-center justify-between">
                         <span>書類・図面検査</span>
-                        <ArrowRight className="w-4 h-4 text-blue-400 opacity-0 group-hover:opacity-100 transition-transform group-hover:translate-x-1" />
+                        <ArrowRight className="w-3.5 h-3.5 text-blue-400 opacity-0 group-hover:opacity-100 transition-transform group-hover:translate-x-1" />
                       </h4>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        施工計画書、工事打合せ簿、試験表、完成図面を全画面で閲覧・検査します。
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        報告書、打合せ簿、計算書、完成図面を全画面で閲覧・検査します。
                       </p>
                     </div>
-                    <div className="mt-4 pt-3 border-t border-slate-700/80 flex items-center justify-between text-xs">
+                    <div className="mt-3 pt-2.5 border-t border-slate-700/80 flex items-center justify-between text-[11px]">
                       <span className="text-slate-400">データ件数:</span>
                       <span className="font-bold text-blue-400">
                         {dataset.reports.length + dataset.drawings.length} 件
@@ -219,40 +233,152 @@ export const App: React.FC = () => {
                     </div>
                   </button>
 
-                  {/* 工事写真で起動 */}
+                  {/* 写真で起動 */}
                   <button
                     onClick={() => {
                       setViewMode('photo-only');
                       setShowModeSelectModal(false);
                     }}
-                    className="p-5 rounded-xl bg-slate-800/90 hover:bg-emerald-950/40 border border-slate-700 hover:border-emerald-500 text-left transition flex flex-col justify-between group shadow-lg cursor-pointer"
+                    className="p-4 rounded-xl bg-slate-800/90 hover:bg-emerald-950/40 border border-slate-700 hover:border-emerald-500 text-left transition flex flex-col justify-between group shadow-lg cursor-pointer"
                   >
                     <div>
-                      <div className="w-10 h-10 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center mb-3 group-hover:scale-110 transition">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center mb-2.5 group-hover:scale-110 transition">
                         <ImageIcon className="w-5 h-5" />
                       </div>
-                      <h4 className="text-base font-bold text-white mb-1 flex items-center justify-between">
-                        <span>工事写真検査</span>
-                        <ArrowRight className="w-4 h-4 text-emerald-400 opacity-0 group-hover:opacity-100 transition-transform group-hover:translate-x-1" />
+                      <h4 className="text-sm font-bold text-white mb-1 flex items-center justify-between">
+                        <span>{dataset.constructionInfo.deliveryType === 'consignment' ? '業務写真検査' : '工事写真検査'}</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-emerald-400 opacity-0 group-hover:opacity-100 transition-transform group-hover:translate-x-1" />
                       </h4>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        工種体系（工種＞種別＞細別）スマートツリーと連続スクロールで写真台帳を検査します。
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        工種・大分類ツリーと連続スクロールで写真台帳を検査します。
                       </p>
                     </div>
-                    <div className="mt-4 pt-3 border-t border-slate-700/80 flex items-center justify-between text-xs">
+                    <div className="mt-3 pt-2.5 border-t border-slate-700/80 flex items-center justify-between text-[11px]">
                       <span className="text-slate-400">写真枚数:</span>
                       <span className="font-bold text-emerald-400">
                         {dataset.photos.length} 枚
                       </span>
                     </div>
                   </button>
+
+                  {/* 2画面（別窓）で両方同時に開く */}
+                  <button
+                    onClick={() => {
+                      setViewMode('doc-only');
+                      setSubWindowMode('photo-only');
+                      setShowModeSelectModal(false);
+                    }}
+                    className="p-4 rounded-xl bg-purple-950/30 hover:bg-purple-900/40 border border-purple-500/50 hover:border-purple-400 text-left transition flex flex-col justify-between group shadow-lg cursor-pointer"
+                  >
+                    <div>
+                      <div className="w-9 h-9 rounded-lg bg-purple-600/30 text-purple-300 flex items-center justify-center mb-2.5 group-hover:scale-110 transition">
+                        <ExternalLink className="w-5 h-5" />
+                      </div>
+                      <h4 className="text-sm font-bold text-purple-200 mb-1 flex items-center justify-between">
+                        <span>2画面で両方開く</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-purple-300 opacity-0 group-hover:opacity-100 transition-transform group-hover:translate-x-1" />
+                      </h4>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        メイン窓に書類、別窓に写真を同時に開き、マルチ画面で並列検査します。
+                      </p>
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-purple-500/30 flex items-center justify-between text-[11px]">
+                      <span className="text-purple-300 font-semibold">2画面並列</span>
+                      <span className="font-bold text-purple-300">おすすめ ⧉</span>
+                    </div>
+                  </button>
                 </div>
 
                 <div className="text-[11px] text-slate-500">
-                  ※ 検査中も画面上部のヘッダーボタンからいつでも瞬時に切り替えられます
+                  ※ 検査中も画面上部のヘッダーボタン「別窓で開く ↗」からいつでも別ウィンドウを呼び出せます
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ==================== 別窓（サブウィンドウ）ポータル ==================== */}
+          {subWindowMode && dataset && (
+            <SubWindowPortal
+              title={`GioV 電子納品 - ${
+                subWindowMode === 'photo-only'
+                  ? (dataset.constructionInfo.deliveryType === 'consignment' ? '業務写真ビューア' : '工事写真ビューア')
+                  : '書類・図面ビューア'
+              }`}
+              onClose={() => setSubWindowMode(null)}
+              width={1280}
+              height={850}
+            >
+              <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans select-text">
+                {/* サブウィンドウ専用ヘッダー */}
+                <div className="bg-slate-900 px-4 py-2 border-b border-slate-800 flex items-center justify-between shrink-0 select-none shadow">
+                  <div className="flex items-center gap-3">
+                    <span className="bg-purple-900/60 text-purple-300 border border-purple-500/50 text-[11px] font-bold px-2 py-0.5 rounded tracking-wide">
+                      別窓ビュー
+                    </span>
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>
+                        {subWindowMode === 'photo-only'
+                          ? (dataset.constructionInfo.deliveryType === 'consignment' ? '業務写真検査' : '工事写真検査')
+                          : '書類・図面検査'}
+                      </span>
+                      <span className="text-xs font-normal text-slate-400">
+                        （{dataset.constructionInfo.constructionName}）
+                      </span>
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setSubWindowMode(null)}
+                      className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-xs border border-slate-700 transition"
+                    >
+                      この窓を閉じる
+                    </button>
+                  </div>
+                </div>
+
+                {/* サブウィンドウのメイン領域（ツリー ＋ ビューア） */}
+                <div className="flex-1 flex overflow-hidden">
+                  <InspectionTreeNav
+                    reports={dataset.reports}
+                    drawings={dataset.drawings}
+                    photos={dataset.photos}
+                    selectedReportId={selectedReportId}
+                    selectedDrawingId={selectedDrawingId}
+                    selectedPhotoId={selectedPhotoId}
+                    isIndexSelected={docTab === 'index'}
+                    inspectionRecords={inspectionRecords}
+                    viewMode={subWindowMode}
+                    onSelectIndex={() => setDocTab('index')}
+                    onSelectReport={handleTreeSelectReport}
+                    onSelectDrawing={handleTreeSelectDrawing}
+                    onSelectPhoto={setSelectedPhotoId}
+                  />
+                  <div className="flex-1 flex overflow-hidden">
+                    {subWindowMode === 'doc-only' ? (
+                      <DocumentViewer
+                        constructionInfo={dataset.constructionInfo}
+                        reports={dataset.reports}
+                        drawings={dataset.drawings}
+                        selectedReportId={selectedReportId}
+                        selectedDrawingId={selectedDrawingId}
+                        activeTab={docTab}
+                        inspectionRecords={inspectionRecords}
+                        onActiveTabChange={setDocTab}
+                        onUpdateInspection={handleUpdateInspection}
+                      />
+                    ) : (
+                      <PhotoViewer
+                        photos={dataset.photos}
+                        selectedPhotoId={selectedPhotoId}
+                        inspectionRecords={inspectionRecords}
+                        onSelectPhoto={setSelectedPhotoId}
+                        onUpdateInspection={handleUpdateInspection}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+            </SubWindowPortal>
           )}
         </>
       )}

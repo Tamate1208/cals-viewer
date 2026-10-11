@@ -4,6 +4,7 @@ import type { ConstructionInfo, InspectionRecord } from '../types/cals';
 import { 
   Building2, 
   Calendar, 
+  ExternalLink,
   FileSpreadsheet, 
   FileText, 
   FolderOpen, 
@@ -22,6 +23,8 @@ interface HeaderProps {
   onOpenReportModal: () => void;
   hasDocs?: boolean;
   hasPhotos?: boolean;
+  onToggleSubWindow?: () => void;
+  isSubWindowOpen?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -34,6 +37,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenReportModal,
   hasDocs = true,
   hasPhotos = true,
+  onToggleSubWindow,
+  isSubWindowOpen = false,
 }) => {
   // 検査進捗計算
   const records = Object.values(inspectionRecords);
@@ -41,6 +46,11 @@ export const Header: React.FC<HeaderProps> = ({
   const issueCount = records.filter(r => r.status === 'issue').length;
   const inspectedCount = okCount + issueCount;
   const progressPercent = totalItemsCount > 0 ? Math.round((inspectedCount / totalItemsCount) * 100) : 0;
+
+  // 相手側の表示名
+  const targetLabel = viewMode === 'doc-only'
+    ? (constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真')
+    : '書類・図面';
 
   return (
     <header className="bg-slate-900 text-slate-100 border-b border-slate-800 shrink-0 select-none shadow-md z-20">
@@ -102,6 +112,22 @@ export const Header: React.FC<HeaderProps> = ({
               <span>{constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真'}</span>
             </button>
           </div>
+
+          {/* 相手方のXMLを別窓で開くボタン (書類・写真の両方がある場合のみ) */}
+          {hasDocs && hasPhotos && onToggleSubWindow && (
+            <button
+              onClick={onToggleSubWindow}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition active:scale-95 ${
+                isSubWindowOpen
+                  ? 'bg-purple-900/80 hover:bg-purple-800 text-purple-200 border-purple-400 shadow-md'
+                  : 'bg-slate-800 hover:bg-purple-950/60 text-purple-300 hover:text-purple-200 border-purple-500/50 shadow-sm'
+              }`}
+              title={isSubWindowOpen ? '別窓を閉じる' : `別ウィンドウで「${targetLabel}」を開き、2画面で同時に検査`}
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-purple-400" />
+              <span>{isSubWindowOpen ? '別窓表示中 ✕' : `別窓で${targetLabel} ↗`}</span>
+            </button>
+          )}
 
           {/* 検査調書・指摘エクスポートボタン */}
           <button
