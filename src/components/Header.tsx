@@ -4,7 +4,6 @@ import type { ConstructionInfo, InspectionRecord } from '../types/cals';
 import { 
   Building2, 
   Calendar, 
-  Columns2, 
   FileSpreadsheet, 
   FileText, 
   FolderOpen, 
@@ -17,10 +16,12 @@ interface HeaderProps {
   constructionInfo: ConstructionInfo;
   inspectionRecords: Record<string, InspectionRecord>;
   totalItemsCount: number;
-  viewMode: 'split' | 'doc-only' | 'photo-only';
-  onViewModeChange: (mode: 'split' | 'doc-only' | 'photo-only') => void;
+  viewMode: 'doc-only' | 'photo-only';
+  onViewModeChange: (mode: 'doc-only' | 'photo-only') => void;
   onOpenFolderClick: () => void;
   onOpenReportModal: () => void;
+  hasDocs?: boolean;
+  hasPhotos?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,6 +32,8 @@ export const Header: React.FC<HeaderProps> = ({
   onViewModeChange,
   onOpenFolderClick,
   onOpenReportModal,
+  hasDocs = true,
+  hasPhotos = true,
 }) => {
   // 検査進捗計算
   const records = Object.values(inspectionRecords);
@@ -61,45 +64,35 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* 右側: ビュー切替 ＆ アクション */}
+        {/* 右側: 検査対象切替（書類・図面 / 工事写真） ＆ アクション */}
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          {/* 画面分割切り替えボタン */}
+          {/* 検査対象モード切替トグル [書類・図面] [工事写真] */}
           <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700 text-xs">
             <button
-              onClick={() => onViewModeChange('split')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-medium transition ${
-                viewMode === 'split' 
-                  ? 'bg-blue-600 text-white shadow-sm' 
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="書類と写真を左右に並べて突合検査"
-            >
-              <Columns2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">左右分割</span>
-            </button>
-            <button
               onClick={() => onViewModeChange('doc-only')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-medium transition ${
+              disabled={!hasDocs}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition ${
                 viewMode === 'doc-only' 
                   ? 'bg-blue-600 text-white shadow-sm' 
-                  : 'text-slate-400 hover:text-slate-200'
+                  : hasDocs ? 'text-slate-300 hover:text-white' : 'text-slate-600 cursor-not-allowed'
               }`}
               title="書類・図面を全画面表示"
             >
               <FileText className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">書類のみ</span>
+              <span>書類・図面</span>
             </button>
             <button
               onClick={() => onViewModeChange('photo-only')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md font-medium transition ${
+              disabled={!hasPhotos}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-semibold transition ${
                 viewMode === 'photo-only' 
                   ? 'bg-blue-600 text-white shadow-sm' 
-                  : 'text-slate-400 hover:text-slate-200'
+                  : hasPhotos ? 'text-slate-300 hover:text-white' : 'text-slate-600 cursor-not-allowed'
               }`}
               title="工事写真を全画面表示"
             >
               <Image className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">写真のみ</span>
+              <span>工事写真</span>
             </button>
           </div>
 

@@ -264,8 +264,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
           <div className="bg-slate-900/40 border border-slate-800 p-3.5 rounded-xl flex items-start gap-2.5">
             <Layers className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
             <div>
-              <div className="font-semibold text-slate-200 mb-0.5">左右分割ビューで突合検査</div>
-              <div>報告書・試験表PDFと工事写真を左右に並べて同時に目視確認・照合作業が行えます。</div>
+              <div className="font-semibold text-slate-200 mb-0.5">書類検査・写真検査の最適ビュー</div>
+              <div>画面全体を活用し、書類・図面PDFや工種体系スクロール写真台帳を見やすく精細に検査できます。</div>
             </div>
           </div>
           <div className="bg-slate-900/40 border border-slate-800 p-3.5 rounded-xl flex items-start gap-2.5">

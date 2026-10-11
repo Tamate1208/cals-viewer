@@ -31,6 +31,8 @@ interface InspectionTreeNavProps {
   selectedPhotoId: string | null;
   isIndexSelected?: boolean;
   inspectionRecords: Record<string, InspectionRecord>;
+  viewMode?: 'doc-only' | 'photo-only';
+  onViewModeChange?: (mode: 'doc-only' | 'photo-only') => void;
   onSelectIndex?: () => void;
   onSelectReport: (id: string) => void;
   onSelectDrawing: (id: string) => void;
@@ -46,15 +48,32 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   selectedPhotoId,
   isIndexSelected = false,
   inspectionRecords,
+  viewMode,
+  onViewModeChange,
   onSelectIndex,
   onSelectReport,
   onSelectDrawing,
   onSelectPhoto,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<'docs' | 'photos'>('docs');
+  const [activeTab, setActiveTab] = useState<'docs' | 'photos'>(
+    viewMode === 'photo-only' ? 'photos' : 'docs'
+  );
   const [photoTreeMode, setPhotoTreeMode] = useState<'workTree' | 'timeline' | 'category' | 'station'>('workTree');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // 外部の viewMode と内部の activeTab を同期
+  React.useEffect(() => {
+    if (viewMode) {
+      setActiveTab(viewMode === 'photo-only' ? 'photos' : 'docs');
+    }
+  }, [viewMode]);
+
+  // タブ切り替えハンドラ
+  const handleTabChange = (tab: 'docs' | 'photos') => {
+    setActiveTab(tab);
+    onViewModeChange?.(tab === 'docs' ? 'doc-only' : 'photo-only');
+  };
 
   // フォルダの展開/折りたたみ状態を管理（デフォルトは閉じた状態）
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
@@ -593,7 +612,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
         </button>
 
         <button
-          onClick={() => { setIsOpen(true); setActiveTab('docs'); }}
+          onClick={() => { setIsOpen(true); handleTabChange('docs'); }}
           className={`p-1.5 rounded-lg transition mb-2 ${
             activeTab === 'docs' ? 'text-blue-400 bg-blue-600/20' : 'text-slate-500 hover:text-slate-300'
           }`}
@@ -603,7 +622,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
         </button>
 
         <button
-          onClick={() => { setIsOpen(true); setActiveTab('photos'); }}
+          onClick={() => { setIsOpen(true); handleTabChange('photos'); }}
           className={`p-1.5 rounded-lg transition ${
             activeTab === 'photos' ? 'text-blue-400 bg-blue-600/20' : 'text-slate-500 hover:text-slate-300'
           }`}
@@ -654,7 +673,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
       {/* タブ切り替え: 書類・図面 / 工事写真 */}
       <div className="grid grid-cols-2 p-1.5 gap-1 bg-slate-900/60 border-b border-slate-800 shrink-0 text-xs">
         <button
-          onClick={() => setActiveTab('docs')}
+          onClick={() => handleTabChange('docs')}
           className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md font-semibold transition ${
             activeTab === 'docs'
               ? 'bg-blue-600 text-white shadow-sm'
@@ -666,7 +685,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('photos')}
+          onClick={() => handleTabChange('photos')}
           className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md font-semibold transition ${
             activeTab === 'photos'
               ? 'bg-blue-600 text-white shadow-sm'
