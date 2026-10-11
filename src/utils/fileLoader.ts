@@ -18,6 +18,13 @@ interface FileItem {
   blob: Blob;
 }
 
+// 開発環境（Vite dev）でのみデバッグ情報をコンソール出力
+function devLog(...args: unknown[]): void {
+  if (import.meta.env.DEV) {
+    console.info(...args);
+  }
+}
+
 /**
  * 高速ルックアップインデックス
  * 数千ファイルあっても O(1) で即座に検索可能
@@ -376,10 +383,10 @@ async function processIndex(
   }
 
   if (isConsignment) {
-    console.info('CALS モード判定: 【業務委託成果品 (INDEX_D)】');
+    devLog('CALS モード判定: 【業務委託成果品 (INDEX_D)】');
     return processConsignmentIndex(index, folderName, onProgress);
   } else {
-    console.info('CALS モード判定: 【土木工事成果品 (INDEX_C)】');
+    devLog('CALS モード判定: 【土木工事成果品 (INDEX_C)】');
     return processConstructionIndex(index, folderName, onProgress);
   }
 }
@@ -422,7 +429,7 @@ async function processConsignmentIndex(
       const buffer = await indexEntries[0].blob.arrayBuffer();
       const xmlText = decodeXmlBuffer(buffer);
       const parsed = parseConsignmentIndexXml(xmlText);
-      console.info(`INDEX_D XML (${indexEntries[0].relativePath}) parsed:`, parsed);
+      devLog(`INDEX_D XML (${indexEntries[0].relativePath}) parsed:`, parsed);
 
       if (parsed.constructionName && parsed.constructionName !== '（名称未設定業務）') {
         constructionInfo.constructionName = parsed.constructionName;
@@ -462,7 +469,7 @@ async function processConsignmentIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseConsignmentPhotoXml(xmlText);
-        console.info(`PHOTO_D XML (${entry.relativePath}) parsed count:`, parsed.length);
+        devLog(`PHOTO_D XML (${entry.relativePath}) parsed count:`, parsed.length);
         photos.push(...parsed);
       } catch (e) {
         console.warn('PHOTO_D XML parse failed:', e);
@@ -510,7 +517,7 @@ async function processConsignmentIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseConsignmentReportXml(xmlText);
-        console.info(`REPORT_D XML (${entry.relativePath}) parsed count:`, parsed.length);
+        devLog(`REPORT_D XML (${entry.relativePath}) parsed count:`, parsed.length);
         reports.push(...parsed);
       } catch (e) {
         console.warn('REPORT_D XML parse failed:', e);
@@ -531,7 +538,7 @@ async function processConsignmentIndex(
         const buffer = await bEntry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsedBoring = parseConsignmentBoringXml(xmlText);
-        console.info(`BORING XML (${bEntry.relativePath}) parsed count:`, parsedBoring.length);
+        devLog(`BORING XML (${bEntry.relativePath}) parsed count:`, parsedBoring.length);
         reports.push(...parsedBoring);
       } catch (e) {
         console.warn('BORING XML parse failed:', e);
@@ -567,7 +574,7 @@ async function processConsignmentIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseDrawingXml(xmlText);
-        console.info(`DRAWING_D XML (${entry.relativePath}) parsed count:`, parsed.length);
+        devLog(`DRAWING_D XML (${entry.relativePath}) parsed count:`, parsed.length);
         drawings.push(...parsed);
       } catch (e) {
         console.warn('DRAWING_D XML parse failed:', e);
@@ -637,7 +644,7 @@ async function processConstructionIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseIndexXml(xmlText);
-        console.info(`INDEX_C XML (${entry.relativePath}) parsed:`, parsed);
+        devLog(`INDEX_C XML (${entry.relativePath}) parsed:`, parsed);
 
         if (parsed.constructionName && parsed.constructionName !== '（名称未設定工事）') {
           constructionInfo.constructionName = parsed.constructionName;
@@ -676,7 +683,7 @@ async function processConstructionIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parsePhotoXml(xmlText);
-        console.info(`PHOTO_C XML (${entry.relativePath}) parsed count:`, parsed.length);
+        devLog(`PHOTO_C XML (${entry.relativePath}) parsed count:`, parsed.length);
         photos.push(...parsed);
       } catch (e) {
         console.warn('PHOTO_C XML parse failed:', e);
@@ -741,7 +748,7 @@ async function processConstructionIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseReportXml(xmlText);
-        console.info(`REPORT_C XML (${entry.relativePath}) parsed count:`, parsed.length);
+        devLog(`REPORT_C XML (${entry.relativePath}) parsed count:`, parsed.length);
         reports.push(...parsed);
       } catch (e) {
         console.warn('REPORT_C XML parse failed:', e);
@@ -788,7 +795,7 @@ async function processConstructionIndex(
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
         const parsed = parseDrawingXml(xmlText);
-        console.info(`DRAWING_C XML (${entry.relativePath}) parsed count:`, parsed.length);
+        devLog(`DRAWING_C XML (${entry.relativePath}) parsed count:`, parsed.length);
         drawings.push(...parsed);
       } catch (e) {
         console.warn('DRAWING_C XML parse failed:', e);
