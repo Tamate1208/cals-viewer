@@ -19,11 +19,12 @@ class FastFileIndex {
 
   constructor(items: FileItem[]) {
     for (const item of items) {
-      const relLower = item.relativePath.toLowerCase();
+      // パス区切りを '/' に正規化
+      const normalizedPath = item.relativePath.replace(/\\/g, '/').toLowerCase();
       const nameLower = item.name.toLowerCase();
 
       // パスマップ
-      this.exactPathMap.set(relLower, item);
+      this.exactPathMap.set(normalizedPath, item);
 
       // ファイルネームマップ
       const existing = this.fileNameMap.get(nameLower);
@@ -41,14 +42,14 @@ class FastFileIndex {
   }
 
   /**
-   * 指定名のXMLアイテムを高速取得 (PHOTO_C.XML, PHOTO.XML, パターン一致を網羅)
+   * 指定名のXMLアイテムを高速取得
    */
   public findXml(...targetNames: string[]): FileItem[] {
     const targets = targetNames.map(t => t.toLowerCase());
     const result: FileItem[] = [];
     for (const item of this.xmlItems) {
       const nameLower = item.name.toLowerCase();
-      const relLower = item.relativePath.toLowerCase();
+      const relLower = item.relativePath.replace(/\\/g, '/').toLowerCase();
       for (const t of targets) {
         if (nameLower === t || relLower.endsWith('/' + t)) {
           if (!result.includes(item)) {
@@ -66,7 +67,9 @@ class FastFileIndex {
   public findXmlByPattern(pattern: RegExp): FileItem[] {
     const result: FileItem[] = [];
     for (const item of this.xmlItems) {
-      if (pattern.test(item.name) || pattern.test(item.relativePath)) {
+      const name = item.name;
+      const rel = item.relativePath.replace(/\\/g, '/');
+      if (pattern.test(name) || pattern.test(rel)) {
         if (!result.includes(item)) {
           result.push(item);
         }
@@ -82,28 +85,38 @@ class FastFileIndex {
   public resolveBlobUrl(fileName: string, folderHint?: string, basePrefix?: string): string | undefined {
     if (!fileName) return undefined;
     // パス区切りを取り除いて純粋なファイル名を取得 (例: "PIC/PIC00001.JPG" -> "pic00001.jpg")
-    const rawClean = fileName.trim().replace(/^[\/\\]+/, '');
-    const baseFileName = (rawClean.split(/[\/\\]/).pop() || rawClean).toLowerCase();
+    const rawClean = fileName.trim().replace(/^[/\\]+/, '').replace(/\\/g, '/').replace(/^\.\//, '');
+    const baseFileName = (rawClean.split('/').pop() || rawClean).toLowerCase();
     const cleanPath = rawClean.toLowerCase();
 
     // 1. パスマップでの完全一致検索 (basePrefix + folderHint + パスバリエーション)
-    const prefixes = [basePrefix || '', ''];
+    const prefixes = [basePrefix ? basePrefix.replace(/\\/g, '/').toLowerCase() : '', ''];
     const hints = folderHint ? [folderHint.toLowerCase(), ''] : [''];
-    const subDirs = ['', 'pic/', 'org/'];
+    const subDirs = ['', 'pic/', 'org/', 'dra/', 'pdf/'];
+
+    // 拡張子バリエーション (.jpg <-> .jpeg 等)
+    const fileNameVariations = [baseFileName];
+    if (baseFileName.endsWith('.jpg')) {
+      fileNameVariations.push(baseFileName.replace(/\.jpg$/, '.jpeg'));
+    } else if (baseFileName.endsWith('.jpeg')) {
+      fileNameVariations.push(baseFileName.replace(/\.jpeg$/, '.jpg'));
+    }
 
     for (const pfx of prefixes) {
       for (const h of hints) {
         for (const sub of subDirs) {
-          const tryPath = `${pfx}${h ? h + '/' : ''}${sub}${baseFileName}`;
-          const found = this.exactPathMap.get(tryPath);
-          if (found) return URL.createObjectURL(found.blob);
+          for (const fn of fileNameVariations) {
+            const tryPath = `${pfx}${h ? h + '/' : ''}${sub}${fn}`;
+            const found = this.exactPathMap.get(tryPath);
+            if (found) return URL.createObjectURL(found.blob);
+          }
         }
       }
     }
 
     // 2. 指定された cleanPath そのもののマッチ
     if (basePrefix) {
-      const tryWithPrefix = `${basePrefix}${cleanPath}`;
+      const tryWithPrefix = `${basePrefix.replace(/\\/g, '/').toLowerCase()}${cleanPath}`;
       const found = this.exactPathMap.get(tryWithPrefix);
       if (found) return URL.createObjectURL(found.blob);
     }
@@ -111,23 +124,24 @@ class FastFileIndex {
     if (foundDirect) return URL.createObjectURL(foundDirect.blob);
 
     // 3. 純粋なファイル名での一意マッチ
-    const matches = this.fileNameMap.get(baseFileName);
-    if (matches && matches.length > 0) {
-      if (matches.length === 1) {
+    for (const fn of fileNameVariations) {
+      const matches = this.fileNameMap.get(fn);
+      if (matches && matches.length > 0) {
+        if (matches.length === 1) {
+          return URL.createObjectURL(matches[0].blob);
+        }
+        // 複数ある場合はフォルダヒントを含むものを最優先
+        if (folderHint) {
+          const hintLower = folderHint.toLowerCase();
+          const preferred = matches.find(m => m.relativePath.toLowerCase().includes(hintLower));
+          if (preferred) return URL.createObjectURL(preferred.blob);
+        }
         return URL.createObjectURL(matches[0].blob);
       }
-      // 複数ある場合はフォルダヒントを含むものを最優先
-      if (folderHint) {
-        const hintLower = folderHint.toLowerCase();
-        const preferred = matches.find(m => m.relativePath.toLowerCase().includes(hintLower));
-        if (preferred) return URL.createObjectURL(preferred.blob);
-      }
-      return URL.createObjectURL(matches[0].blob);
     }
 
     return undefined;
   }
-
 
   /**
    * 画像拡張子（.jpg, .jpeg, .png）のファイルを抽出（XMLがない場合のフォールバック）
@@ -152,7 +166,7 @@ class FastFileIndex {
     for (const [_, items] of this.fileNameMap) {
       for (const item of items) {
         if (item.name.toLowerCase().endsWith('.pdf')) {
-          const isDrawing = item.relativePath.toLowerCase().includes('drawing');
+          const isDrawing = item.relativePath.toLowerCase().includes('drawing') || item.relativePath.toLowerCase().includes('dra');
           if (excludeDrawing ? !isDrawing : isDrawing) {
             list.push(item);
           }
@@ -233,7 +247,7 @@ async function processIndex(
   folderName: string,
   onProgress?: (status: string) => void
 ): Promise<DeliveryDataset> {
-  onProgress?.('INDEX_C.XML を解析中...');
+  onProgress?.('管理ファイル (INDEX_C.XML / INDEX_D.XML) を解析中...');
 
   // 1. INDEX_C.XML または INDEX_D.XML の探索
   let constructionInfo = {
@@ -243,17 +257,26 @@ async function processIndex(
     contractorName: '',
   };
 
-  const indexEntries = index.findXml('INDEX_C.XML').concat(index.findXml('INDEX_D.XML'));
+  let indexEntries = index.findXml('INDEX_C.XML', 'INDEX_D.XML', 'INDEX.XML', 'INDEX_M.XML');
+  if (indexEntries.length === 0) {
+    indexEntries = index.findXmlByPattern(/^index.*\.xml$/i);
+  }
+
   let basePrefix = '';
 
   if (indexEntries.length > 0) {
     const primaryIndex = indexEntries[0];
-    const buffer = await primaryIndex.blob.arrayBuffer();
-    const xmlText = decodeXmlBuffer(buffer);
-    constructionInfo = parseIndexXml(xmlText);
+    try {
+      const buffer = await primaryIndex.blob.arrayBuffer();
+      const xmlText = decodeXmlBuffer(buffer);
+      constructionInfo = parseIndexXml(xmlText);
+      console.info('INDEX XML Parsed:', constructionInfo);
 
-    if (!constructionInfo.constructionName || constructionInfo.constructionName === '（名称未設定工事）') {
-      constructionInfo.constructionName = folderName;
+      if (!constructionInfo.constructionName || constructionInfo.constructionName === '（名称未設定工事）') {
+        constructionInfo.constructionName = folderName;
+      }
+    } catch (e) {
+      console.warn('INDEX XML parse failed:', e);
     }
 
     const lastSlash = primaryIndex.relativePath.lastIndexOf('/');
@@ -262,10 +285,10 @@ async function processIndex(
     }
   }
 
-  // 2. PHOTO_C.XML / PHOTO.XML の解析
-  onProgress?.('工事写真XML (PHOTO_C.XML / PHOTO.XML) を高速解析中...');
+  // 2. PHOTO_C.XML / PHOTO.XML / PHOTO_D.XML の解析
+  onProgress?.('工事写真XML (PHOTO_C.XML / PHOTO.XML) を解析中...');
   let photos: PhotoItem[] = [];
-  let photoXmlEntries = index.findXml('PHOTO_C.XML', 'PHOTO.XML', 'PHOTO_D.XML');
+  let photoXmlEntries = index.findXml('PHOTO_C.XML', 'PHOTO.XML', 'PHOTO_D.XML', 'PHOTO_M.XML');
   if (photoXmlEntries.length === 0) {
     photoXmlEntries = index.findXmlByPattern(/^photo.*\.xml$/i);
   }
@@ -275,7 +298,9 @@ async function processIndex(
       try {
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
-        photos.push(...parsePhotoXml(xmlText));
+        const parsed = parsePhotoXml(xmlText);
+        console.info(`PHOTO XML (${entry.name}) parsed count:`, parsed.length);
+        photos.push(...parsed);
       } catch (e) {
         console.warn('PHOTO XML parse failed:', e);
       }
@@ -320,12 +345,22 @@ async function processIndex(
     }));
   }
 
-  // 3. REPORT_C.XML / REPORT.XML の解析
-  onProgress?.('報告書類XML (REPORT_C.XML / REPORT.XML) を解析中...');
+  // 3. REPORT_C.XML / REPORT.XML / MEET_C.XML / PLAN_C.XML の解析
+  onProgress?.('報告書類XML (REPORT_C.XML / MEET_C.XML / PLAN_C.XML) を解析中...');
   let reports: ReportItem[] = [];
-  let reportXmlEntries = index.findXml('REPORT_C.XML', 'REPORT.XML', 'REPORT_D.XML');
+  let reportXmlEntries = index.findXml(
+    'REPORT_C.XML', 
+    'REPORT.XML', 
+    'REPORT_D.XML', 
+    'MEET_C.XML', 
+    'MEET.XML', 
+    'MEET_D.XML', 
+    'PLAN_C.XML', 
+    'PLAN.XML', 
+    'PLAN_D.XML'
+  );
   if (reportXmlEntries.length === 0) {
-    reportXmlEntries = index.findXmlByPattern(/^report.*\.xml$/i);
+    reportXmlEntries = index.findXmlByPattern(/^(report|meet|plan).*\.xml$/i);
   }
 
   if (reportXmlEntries.length > 0) {
@@ -333,7 +368,9 @@ async function processIndex(
       try {
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
-        reports.push(...parseReportXml(xmlText));
+        const parsed = parseReportXml(xmlText);
+        console.info(`REPORT XML (${entry.name}) parsed count:`, parsed.length);
+        reports.push(...parsed);
       } catch (e) {
         console.warn('REPORT XML parse failed:', e);
       }
@@ -361,12 +398,19 @@ async function processIndex(
     }));
   }
 
-  // 4. DRAWING_C.XML / DRAWING.XML の解析
-  onProgress?.('完成図面XML (DRAWING_C.XML / DRAWING.XML) を解析中...');
+  // 4. DRAWING_C.XML / DRAWING.XML / DRAWINGF.XML / DRAWINGS.XML の解析
+  onProgress?.('完成図面XML (DRAWINGF.XML / DRAWING_C.XML) を解析中...');
   let drawings: DrawingItem[] = [];
-  let drawingXmlEntries = index.findXml('DRAWING_C.XML', 'DRAWING.XML', 'DRAWING_D.XML');
+  let drawingXmlEntries = index.findXml(
+    'DRAWINGF.XML', 
+    'DRAWINGS.XML', 
+    'DRAWING_C.XML', 
+    'DRAWING.XML', 
+    'DRAWING_D.XML',
+    'DRAWING_M.XML'
+  );
   if (drawingXmlEntries.length === 0) {
-    drawingXmlEntries = index.findXmlByPattern(/^drawing.*\.xml$/i);
+    drawingXmlEntries = index.findXmlByPattern(/^(drawing|draw).*\.xml$/i);
   }
 
   if (drawingXmlEntries.length > 0) {
@@ -374,7 +418,9 @@ async function processIndex(
       try {
         const buffer = await entry.blob.arrayBuffer();
         const xmlText = decodeXmlBuffer(buffer);
-        drawings.push(...parseDrawingXml(xmlText));
+        const parsed = parseDrawingXml(xmlText);
+        console.info(`DRAWING XML (${entry.name}) parsed count:`, parsed.length);
+        drawings.push(...parsed);
       } catch (e) {
         console.warn('DRAWING XML parse failed:', e);
       }
@@ -402,7 +448,6 @@ async function processIndex(
     }));
   }
 
-
   onProgress?.('解析完了！画面を描画しています...');
 
   return {
@@ -410,7 +455,7 @@ async function processIndex(
     photos,
     reports,
     drawings,
-    otherFiles: [], // 無駄なBlob生成を完全廃止
+    otherFiles: [],
     loadedAt: new Date().toLocaleString('ja-JP'),
     folderName,
   };
