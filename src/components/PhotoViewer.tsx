@@ -174,6 +174,11 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
       status: rec?.status === status ? 'pending' : status,
       notes: rec?.notes || '',
       updatedAt: new Date().toLocaleString('ja-JP'),
+      fileName: photo.fileName,
+      groupTitle: photo.workType || photo.category,
+      fileRole: photo.workKind ? `${photo.workKind}${photo.workDetail ? ' / ' + photo.workDetail : ''}` : undefined,
+      subCategory: photo.category,
+      locationOrDate: [photo.station ? `測点: ${photo.station}` : '', photo.date ? `撮影: ${photo.date}` : ''].filter(Boolean).join(' | '),
     });
   };
 
@@ -186,6 +191,11 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
       status: rec?.status || 'issue',
       notes,
       updatedAt: new Date().toLocaleString('ja-JP'),
+      fileName: photo.fileName,
+      groupTitle: photo.workType || photo.category,
+      fileRole: photo.workKind ? `${photo.workKind}${photo.workDetail ? ' / ' + photo.workDetail : ''}` : undefined,
+      subCategory: photo.category,
+      locationOrDate: [photo.station ? `測点: ${photo.station}` : '', photo.date ? `撮影: ${photo.date}` : ''].filter(Boolean).join(' | '),
     });
   };
 

@@ -144,6 +144,11 @@ export const App: React.FC = () => {
           status: 'ok',
           notes: updated[p.id]?.notes || '',
           updatedAt: now,
+          fileName: p.fileName,
+          groupTitle: p.workType || p.category,
+          fileRole: p.workKind ? `${p.workKind}${p.workDetail ? ' / ' + p.workDetail : ''}` : undefined,
+          subCategory: p.category,
+          locationOrDate: [p.station ? `測点: ${p.station}` : '', p.date ? `撮影: ${p.date}` : ''].filter(Boolean).join(' | '),
         };
       }
     });
@@ -158,6 +163,11 @@ export const App: React.FC = () => {
           status: 'ok',
           notes: updated[r.id]?.notes || '',
           updatedAt: now,
+          fileName: r.fileName,
+          groupTitle: r.groupTitle || r.type,
+          fileRole: r.fileRole,
+          subCategory: r.type,
+          locationOrDate: r.createDate,
         };
       }
     });
@@ -172,6 +182,10 @@ export const App: React.FC = () => {
           status: 'ok',
           notes: updated[d.id]?.notes || '',
           updatedAt: now,
+          fileName: d.fileName,
+          groupTitle: d.type,
+          fileRole: d.scale ? `縮尺: ${d.scale}` : undefined,
+          subCategory: d.type,
         };
       }
     });
@@ -235,7 +249,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans select-text">
+    <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans select-text print:h-auto print:min-h-full print:overflow-visible print:bg-white print:text-black">
       {!dataset ? (
         <FileDropZone
           onDatasetLoaded={handleDatasetLoaded}
@@ -244,22 +258,24 @@ export const App: React.FC = () => {
         />
       ) : (
         <>
-          <Header
-            constructionInfo={dataset.constructionInfo}
-            inspectionRecords={inspectionRecords}
-            totalItemsCount={totalItemsCount}
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
-            onOpenFolderClick={() => setDataset(null)}
-            onOpenReportModal={() => setShowReportModal(true)}
-            hasDocs={hasDocs}
-            hasPhotos={hasPhotos}
-            onToggleSubWindow={handleToggleSubWindow}
-            isSubWindowOpen={!!subWindowMode}
-            onBulkMarkOk={handleBulkMarkOk}
-          />
+          <div className="print:hidden">
+            <Header
+              constructionInfo={dataset.constructionInfo}
+              inspectionRecords={inspectionRecords}
+              totalItemsCount={totalItemsCount}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              onOpenFolderClick={() => setDataset(null)}
+              onOpenReportModal={() => setShowReportModal(true)}
+              hasDocs={hasDocs}
+              hasPhotos={hasPhotos}
+              onToggleSubWindow={handleToggleSubWindow}
+              isSubWindowOpen={!!subWindowMode}
+              onBulkMarkOk={handleBulkMarkOk}
+            />
+          </div>
 
-          <main className="flex-1 flex overflow-hidden">
+          <main className="flex-1 flex overflow-hidden print:hidden">
             {/* 左側: 種別・階層ツリーナビゲーション */}
             <InspectionTreeNav
               reports={dataset.reports}
@@ -309,6 +325,9 @@ export const App: React.FC = () => {
             <InspectionReportView
               constructionInfo={dataset.constructionInfo}
               inspectionRecords={inspectionRecords}
+              reports={dataset.reports}
+              drawings={dataset.drawings}
+              photos={dataset.photos}
               totalItemsCount={totalItemsCount}
               onBulkMarkOk={handleBulkMarkOk}
               onResetInspection={handleResetInspection}
@@ -513,7 +532,7 @@ export const App: React.FC = () => {
 
       {/* 操作・復元通知トースト */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 border border-emerald-500/80 text-emerald-300 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs sm:text-sm font-semibold animate-in slide-in-from-bottom-3 duration-200">
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 border border-emerald-500/80 text-emerald-300 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs sm:text-sm font-semibold animate-in slide-in-from-bottom-3 duration-200 print:hidden">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>

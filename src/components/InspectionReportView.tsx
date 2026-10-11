@@ -9,13 +9,17 @@ import {
   CheckCheck,
   FileJson,
   Upload,
-  RotateCcw
+  RotateCcw,
+  FileText
 } from 'lucide-react';
-import type { ConstructionInfo, InspectionRecord } from '../types/cals';
+import type { ConstructionInfo, DrawingItem, InspectionRecord, PhotoItem, ReportItem } from '../types/cals';
 
 interface InspectionReportViewProps {
   constructionInfo: ConstructionInfo;
   inspectionRecords: Record<string, InspectionRecord>;
+  reports?: ReportItem[];
+  drawings?: DrawingItem[];
+  photos?: PhotoItem[];
   onClose: () => void;
   totalItemsCount?: number;
   onBulkMarkOk?: () => void;
@@ -26,6 +30,9 @@ interface InspectionReportViewProps {
 export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
   constructionInfo,
   inspectionRecords,
+  reports = [],
+  drawings = [],
+  photos = [],
   onClose,
   totalItemsCount = 0,
   onBulkMarkOk,
@@ -37,6 +44,45 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
   const okRecords = records.filter(r => r.status === 'ok');
   const issueRecords = records.filter(r => r.status === 'issue');
   const uninspectedCount = totalItemsCount > records.length ? totalItemsCount - records.length : 0;
+
+  // 書類・図面・写真の詳細メタデータを解決（保存済み値 優先、未保存時はIDから逆引き）
+  const resolveMeta = (r: InspectionRecord) => {
+    let fileName = r.fileName;
+    let groupTitle = r.groupTitle;
+    let fileRole = r.fileRole;
+    let subCategory = r.subCategory;
+    let locationOrDate = r.locationOrDate;
+
+    if (r.targetType === 'report') {
+      const doc = reports.find(d => d.id === r.targetId);
+      if (doc) {
+        fileName = fileName || doc.fileName;
+        groupTitle = groupTitle || doc.groupTitle || doc.type;
+        fileRole = fileRole || doc.fileRole;
+        subCategory = subCategory || doc.type;
+        locationOrDate = locationOrDate || doc.createDate;
+      }
+    } else if (r.targetType === 'drawing') {
+      const dwg = drawings.find(d => d.id === r.targetId);
+      if (dwg) {
+        fileName = fileName || dwg.fileName;
+        groupTitle = groupTitle || dwg.type;
+        fileRole = fileRole || (dwg.scale ? `縮尺: ${dwg.scale}` : undefined);
+        subCategory = subCategory || dwg.type;
+      }
+    } else if (r.targetType === 'photo') {
+      const pic = photos.find(p => p.id === r.targetId);
+      if (pic) {
+        fileName = fileName || pic.fileName;
+        groupTitle = groupTitle || pic.workType || pic.category;
+        fileRole = fileRole || (pic.workKind ? `${pic.workKind}${pic.workDetail ? ' / ' + pic.workDetail : ''}` : undefined);
+        subCategory = subCategory || pic.category;
+        locationOrDate = locationOrDate || [pic.station ? `測点: ${pic.station}` : '', pic.date ? `撮影: ${pic.date}` : ''].filter(Boolean).join(' | ');
+      }
+    }
+
+    return { fileName, groupTitle, fileRole, subCategory, locationOrDate };
+  };
 
   // JSONバックアップ保存（エクスポート）
   const handleExportJson = () => {
@@ -76,17 +122,24 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
     e.target.value = '';
   };
 
-  // CSVダウンロード処理 (UTF-8 BOM付き)
+  // CSVダウンロード処理 (UTF-8 BOM付き) - ファイル名や大分類を網羅
   const handleExportCsv = () => {
     const photoLabel = constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真';
-    const headers = ['対象種別', '対象タイトル', '検査結果', '指摘事項・確認メモ', '確認日時'];
-    const rows = records.map(r => [
-      r.targetType === 'photo' ? photoLabel : r.targetType === 'report' ? '報告書類' : '完成図面',
-      `"${r.targetTitle.replace(/"/g, '""')}"`,
-      r.status === 'ok' ? '適 (確認済)' : r.status === 'issue' ? '要確認 (指摘)' : '未確認',
-      `"${(r.notes || '').replace(/"/g, '""')}"`,
-      r.updatedAt || '',
-    ]);
+    const headers = ['区分', '大分類・帳票名', '対象項目', 'ファイル名', '役割・細別', '測点・作成日', '判定', '指摘事項・確認メモ', '確認日時'];
+    const rows = records.map(r => {
+      const meta = resolveMeta(r);
+      return [
+        r.targetType === 'photo' ? photoLabel : r.targetType === 'report' ? '報告書類' : '完成図面',
+        `"${(meta.groupTitle || '').replace(/"/g, '""')}"`,
+        `"${r.targetTitle.replace(/"/g, '""')}"`,
+        `"${(meta.fileName || '').replace(/"/g, '""')}"`,
+        `"${(meta.fileRole || '').replace(/"/g, '""')}"`,
+        `"${(meta.locationOrDate || '').replace(/"/g, '""')}"`,
+        r.status === 'ok' ? '適 (確認済)' : r.status === 'issue' ? '要確認 (指摘)' : '未確認',
+        `"${(r.notes || '').replace(/"/g, '""')}"`,
+        r.updatedAt || '',
+      ];
+    });
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(row => row.join(','))].join('\r\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -104,8 +157,8 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden print:m-0 print:p-0 print:border-none print:w-full print:max-h-full print:bg-white print:text-black">
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 print:static print:inset-auto print:z-auto print:p-0 print:bg-white print:block print:overflow-visible print:h-auto">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden print:static print:border-none print:w-full print:max-w-none print:max-h-none print:h-auto print:overflow-visible print:bg-white print:text-black print:shadow-none print:block">
         {/* モーダルヘッダー */}
         <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0 print:border-b-2 print:border-black print:bg-white">
           <div className="flex items-center gap-2">
@@ -126,7 +179,7 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
             <button
               onClick={handleExportCsv}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow transition"
-              title="Excelで開けるCSVを出力"
+              title="Excelで開ける詳細CSVを出力（ファイル名・帳票グループ付き）"
             >
               <Download className="w-3.5 h-3.5" />
               <span>CSV出力</span>
@@ -134,7 +187,7 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
             <button
               onClick={handlePrint}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold shadow transition"
-              title="検査調書を印刷またはPDF保存"
+              title="検査調書を印刷またはPDF保存（全ページ出力対応）"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>印刷 / PDF</span>
@@ -149,7 +202,7 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
         </div>
 
         {/* サマリー ＆ データ管理バー */}
-        <div className="p-6 overflow-y-auto space-y-5">
+        <div className="p-6 overflow-y-auto space-y-5 print:p-6 print:overflow-visible print:h-auto print:block print:space-y-4">
           {/* 検査データ管理・一括操作バー (印刷非表示) */}
           <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 print:hidden">
             <div className="flex items-center gap-2">
@@ -216,7 +269,8 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
               )}
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 print:grid-cols-4">
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 print:grid-cols-4 print-avoid-break">
             <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl print:border print:border-gray-300">
               <div className="text-[11px] text-slate-400 print:text-gray-600 font-medium">点検記録件数</div>
               <div className="text-xl font-bold text-white print:text-black mt-1">{records.length} 件</div>
@@ -236,87 +290,146 @@ export const InspectionReportView: React.FC<InspectionReportViewProps> = ({
               <div className="text-xl font-bold text-rose-300 print:text-black mt-1">{issueRecords.length} 件</div>
             </div>
             <div className="bg-slate-950/60 border border-slate-800 p-3 rounded-xl print:border print:border-gray-300">
-              <div className="text-[11px] text-slate-400 print:text-gray-600 font-medium">作成日時</div>
+              <div className="text-[11px] text-slate-400 print:text-gray-600 font-medium">調書作成日時</div>
               <div className="text-xs font-semibold text-slate-200 print:text-black mt-2">
                 {new Date().toLocaleDateString('ja-JP')}
               </div>
             </div>
           </div>
 
-          {/* 指摘事項ハイライト */}
+          {/* 指摘事項ハイライトカード */}
           {issueRecords.length > 0 && (
-            <div className="bg-rose-950/30 border border-rose-800/80 rounded-xl p-4">
-              <h3 className="text-xs sm:text-sm font-bold text-rose-300 mb-2 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 text-rose-400" />
+            <div className="bg-rose-950/30 border border-rose-800/80 rounded-xl p-4 print:border-rose-400 print:bg-transparent print-avoid-break">
+              <h3 className="text-xs sm:text-sm font-bold text-rose-300 print:text-rose-900 mb-3 flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 text-rose-400 print:text-rose-700" />
                 <span>要確認・指摘事項 ({issueRecords.length} 件)</span>
               </h3>
-              <div className="space-y-2">
-                {issueRecords.map((r) => (
-                  <div key={r.targetId} className="bg-slate-950/80 p-2.5 rounded-lg border border-rose-900/40 text-xs">
-                    <div className="flex items-center justify-between text-slate-300 font-medium mb-1">
-                      <span>[{r.targetType === 'photo' ? '写真' : r.targetType === 'report' ? '書類' : '図面'}] {r.targetTitle}</span>
-                      <span className="text-[10px] text-slate-500">{r.updatedAt}</span>
+              <div className="space-y-3">
+                {issueRecords.map((r) => {
+                  const meta = resolveMeta(r);
+                  return (
+                    <div key={r.targetId} className="bg-slate-950/90 p-3.5 rounded-xl border border-rose-900/60 text-xs shadow-sm print:bg-white print:border print:border-rose-400 print:text-black print-avoid-break">
+                      <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold px-2 py-0.5 rounded text-[10px] bg-rose-950/80 text-rose-300 border border-rose-800/80 print:bg-rose-100 print:text-rose-800 print:border-rose-300">
+                            {r.targetType === 'photo' ? (constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真') : r.targetType === 'report' ? '報告書類' : '完成図面'}
+                          </span>
+                          {meta.groupTitle && (
+                            <span className="text-slate-300 font-bold text-xs sm:text-sm print:text-gray-900">
+                              {meta.groupTitle}
+                            </span>
+                          )}
+                          {meta.groupTitle && <span className="text-slate-600 print:text-gray-400">›</span>}
+                          <span className="text-white font-bold text-xs sm:text-sm print:text-black">
+                            {r.targetTitle}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 print:text-gray-500 font-mono">{r.updatedAt}</span>
+                      </div>
+
+                      {/* ファイル名・詳細メタデータバッジ */}
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400 print:text-gray-700 bg-slate-900/80 p-2 rounded-lg border border-slate-800 mb-2.5 print:bg-gray-50 print:border-gray-300">
+                        {meta.fileName && (
+                          <div className="flex items-center gap-1 font-mono text-blue-300 print:text-blue-700 font-bold">
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>{meta.fileName}</span>
+                          </div>
+                        )}
+                        {meta.fileRole && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 print:text-gray-500">役割:</span>
+                            <span className="font-medium text-slate-200 print:text-gray-900">{meta.fileRole}</span>
+                          </div>
+                        )}
+                        {meta.locationOrDate && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 print:text-gray-500">日時/測点:</span>
+                            <span className="font-medium text-slate-200 print:text-gray-900">{meta.locationOrDate}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 指摘メモ本文 */}
+                      <div className="text-rose-200 bg-rose-950/50 p-2.5 rounded-lg border border-rose-900/50 font-medium print:bg-rose-50 print:text-rose-900 print:border-rose-300 leading-relaxed">
+                        <span className="font-bold text-rose-300 print:text-rose-800 mr-1.5">指摘メモ:</span>
+                        {r.notes || '（指摘内容未記入）'}
+                      </div>
                     </div>
-                    <div className="text-rose-200 bg-rose-950/50 p-2 rounded border border-rose-900/50 font-medium">
-                      指摘メモ: {r.notes || '（指摘内容未記入）'}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* 全記録テーブル */}
-          <div>
+          <div className="pt-2">
             <h3 className="text-xs sm:text-sm font-bold text-slate-200 mb-2 print:text-black">
-              検査点検一覧
+              全項目 検査点検一覧 ({records.length} 件)
             </h3>
             {records.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
                 点検記録がまだありません。写真や書類で「確認済」または「要確認」ボタンを押すとここに反映されます。
               </div>
             ) : (
-              <div className="border border-slate-800 rounded-xl overflow-hidden print:border-gray-400">
-                <table className="w-full text-xs text-left border-collapse">
-                  <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 print:bg-gray-100 print:text-black">
+              <div className="border border-slate-800 rounded-xl overflow-hidden print:border-gray-400 print:rounded-none">
+                <table className="w-full text-xs text-left border-collapse print:text-black">
+                  <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 print:bg-gray-100 print:text-black print:table-header-group">
                     <tr>
-                      <th className="py-2 px-3">区分</th>
-                      <th className="py-2 px-3">対象項目</th>
+                      <th className="py-2 px-3 shrink-0">区分</th>
+                      <th className="py-2 px-3">大分類・帳票名</th>
+                      <th className="py-2 px-3">対象項目 / ファイル名</th>
+                      <th className="py-2 px-3">役割 / 測点・日付</th>
                       <th className="py-2 px-3">判定</th>
                       <th className="py-2 px-3">指摘事項 / メモ</th>
                       <th className="py-2 px-3">確認日時</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 print:divide-gray-300">
-                    {records.map((r) => (
-                      <tr key={r.targetId} className="hover:bg-slate-800/30">
-                        <td className="py-2 px-3 text-slate-400 print:text-black">
-                          {r.targetType === 'photo' ? (constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真') : r.targetType === 'report' ? '報告書類' : '図面'}
-                        </td>
-                        <td className="py-2 px-3 font-medium text-slate-200 print:text-black">
-                          {r.targetTitle}
-                        </td>
-                        <td className="py-2 px-3">
-                          {r.status === 'ok' ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold print:text-green-700">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> 適
-                            </span>
-                          ) : r.status === 'issue' ? (
-                            <span className="inline-flex items-center gap-1 text-rose-400 font-semibold print:text-red-700">
-                              <AlertCircle className="w-3.5 h-3.5" /> 要確認
-                            </span>
-                          ) : (
-                            <span className="text-slate-500">未確認</span>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-slate-300 print:text-black">
-                          {r.notes || 'ー'}
-                        </td>
-                        <td className="py-2 px-3 text-[10px] text-slate-500 print:text-gray-600">
-                          {r.updatedAt}
-                        </td>
-                      </tr>
-                    ))}
+                    {records.map((r) => {
+                      const meta = resolveMeta(r);
+                      return (
+                        <tr key={r.targetId} className="hover:bg-slate-800/30 print:break-inside-avoid print-avoid-break">
+                          <td className="py-2 px-3 text-slate-400 print:text-black whitespace-nowrap">
+                            {r.targetType === 'photo' ? (constructionInfo.deliveryType === 'consignment' ? '業務写真' : '工事写真') : r.targetType === 'report' ? '報告書類' : '完成図面'}
+                          </td>
+                          <td className="py-2 px-3 text-slate-300 print:text-gray-900 font-medium">
+                            {meta.groupTitle || 'ー'}
+                          </td>
+                          <td className="py-2 px-3 font-medium text-slate-100 print:text-black">
+                            <div>{r.targetTitle}</div>
+                            {meta.fileName && (
+                              <div className="text-[11px] font-mono text-blue-400 print:text-blue-700">
+                                {meta.fileName}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-slate-300 print:text-gray-700 text-[11px]">
+                            {meta.fileRole && <div>{meta.fileRole}</div>}
+                            {meta.locationOrDate && <div className="text-slate-400 print:text-gray-500">{meta.locationOrDate}</div>}
+                            {!meta.fileRole && !meta.locationOrDate && 'ー'}
+                          </td>
+                          <td className="py-2 px-3 whitespace-nowrap">
+                            {r.status === 'ok' ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold print:text-green-700">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> 適
+                              </span>
+                            ) : r.status === 'issue' ? (
+                              <span className="inline-flex items-center gap-1 text-rose-400 font-semibold print:text-red-700">
+                                <AlertCircle className="w-3.5 h-3.5" /> 要確認
+                              </span>
+                            ) : (
+                              <span className="text-slate-500">未確認</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-slate-300 print:text-black max-w-xs">
+                            {r.notes || 'ー'}
+                          </td>
+                          <td className="py-2 px-3 text-[10px] text-slate-500 print:text-gray-600 whitespace-nowrap">
+                            {r.updatedAt}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

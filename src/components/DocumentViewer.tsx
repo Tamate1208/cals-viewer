@@ -49,6 +49,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   const handleSetStatus = (status: 'ok' | 'issue') => {
     if (!currentItem) return;
     const isDoc = activeTab === 'reports';
+    const reportItem = isDoc ? (currentItem as ReportItem) : undefined;
+    const drawingItem = !isDoc ? (currentItem as DrawingItem) : undefined;
+
     onUpdateInspection({
       targetId: currentItem.id,
       targetType: isDoc ? 'report' : 'drawing',
@@ -56,12 +59,20 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       status: currentRecord?.status === status ? 'pending' : status,
       notes: currentRecord?.notes || '',
       updatedAt: new Date().toLocaleString('ja-JP'),
+      fileName: currentItem.fileName,
+      groupTitle: reportItem?.groupTitle || (isDoc ? currentItem.type : '完成図面'),
+      fileRole: reportItem?.fileRole || (drawingItem?.scale ? `縮尺: ${drawingItem.scale}` : undefined),
+      subCategory: currentItem.type,
+      locationOrDate: reportItem?.createDate,
     });
   };
 
   const handleUpdateNotes = (notes: string) => {
     if (!currentItem) return;
     const isDoc = activeTab === 'reports';
+    const reportItem = isDoc ? (currentItem as ReportItem) : undefined;
+    const drawingItem = !isDoc ? (currentItem as DrawingItem) : undefined;
+
     onUpdateInspection({
       targetId: currentItem.id,
       targetType: isDoc ? 'report' : 'drawing',
@@ -69,6 +80,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       status: currentRecord?.status || 'issue',
       notes,
       updatedAt: new Date().toLocaleString('ja-JP'),
+      fileName: currentItem.fileName,
+      groupTitle: reportItem?.groupTitle || (isDoc ? currentItem.type : '完成図面'),
+      fileRole: reportItem?.fileRole || (drawingItem?.scale ? `縮尺: ${drawingItem.scale}` : undefined),
+      subCategory: currentItem.type,
+      locationOrDate: reportItem?.createDate,
     });
   };
 

@@ -72,6 +72,12 @@ export interface InspectionRecord {
   status: InspectionStatus;       // 'pending' | 'ok' | 'issue'
   notes: string;                  // 指摘事項・確認メモ
   updatedAt: string;              // 更新日時
+  // 書類・図面・写真の特定用詳細メタデータ
+  fileName?: string;              // ファイル名 (REP00001.PDF, PIC00001.JPG など)
+  groupTitle?: string;            // 帳票グループ名 (例: 第1回打合せ簿, 施工計画書(当初))
+  fileRole?: string;              // 役割 (鑑 / 本文 / 添付資料 など)
+  subCategory?: string;           // 種別・大分類 (例: 打合せ簿, 施工計画書, 擁壁工 など)
+  locationOrDate?: string;        // 測点、作成日、撮影日など
 }
 
 export interface DeliveryDataset {
