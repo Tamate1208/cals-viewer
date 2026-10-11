@@ -25,6 +25,9 @@ interface FileItem {
 class FastFileIndex {
   private exactPathMap = new Map<string, FileItem>();
   private fileNameMap = new Map<string, FileItem[]>();
+  // 末尾サフィックス（8文字）による高速索引（末尾8文字 -> [{ key, items, order }]）
+  private suffixMap = new Map<string, { key: string; items: FileItem[]; order: number }[]>();
+  private allKeyEntries: { key: string; items: FileItem[]; order: number }[] = [];
   public xmlItems: FileItem[] = [];
   // 同一 Blob に対する Blob URL の重複発行を防ぐキャッシュ
   private urlCache = new Map<Blob, string>();
@@ -42,6 +45,7 @@ class FastFileIndex {
   }
 
   constructor(items: FileItem[]) {
+    let order = 0;
     for (const item of items) {
       // パス区切りを '/' に正規化
       const normalizedPath = item.relativePath.replace(/\\/g, '/').toLowerCase();
@@ -50,12 +54,25 @@ class FastFileIndex {
       // パスマップ
       this.exactPathMap.set(normalizedPath, item);
 
-      // ファイルネームマップ
-      const existing = this.fileNameMap.get(nameLower);
+      // ファイルネームマップ & サフィックス索引
+      let existing = this.fileNameMap.get(nameLower);
       if (existing) {
         existing.push(item);
       } else {
-        this.fileNameMap.set(nameLower, [item]);
+        existing = [item];
+        this.fileNameMap.set(nameLower, existing);
+        const entry = { key: nameLower, items: existing, order: order++ };
+        this.allKeyEntries.push(entry);
+
+        if (nameLower.length >= 8) {
+          const suffix = nameLower.slice(-8);
+          let sList = this.suffixMap.get(suffix);
+          if (!sList) {
+            sList = [];
+            this.suffixMap.set(suffix, sList);
+          }
+          sList.push(entry);
+        }
       }
 
       // XMLファイルは別途高速キャッシュ
@@ -164,7 +181,34 @@ class FastFileIndex {
     }
 
     // 4. プレフィックス付きファイル名の解決 (例: 「【設計報告書】REPORT05.PDF」等)
-    for (const [key, items] of this.fileNameMap.entries()) {
+    const canUseSuffix = fileNameVariations.every(fn => fn.length >= 8);
+    let candidates: { key: string; items: FileItem[]; order: number }[];
+
+    if (canUseSuffix) {
+      if (fileNameVariations.length === 1) {
+        candidates = this.suffixMap.get(fileNameVariations[0].slice(-8)) || [];
+      } else {
+        const seen = new Set<string>();
+        const merged: { key: string; items: FileItem[]; order: number }[] = [];
+        for (const fn of fileNameVariations) {
+          const list = this.suffixMap.get(fn.slice(-8));
+          if (list) {
+            for (const item of list) {
+              if (!seen.has(item.key)) {
+                seen.add(item.key);
+                merged.push(item);
+              }
+            }
+          }
+        }
+        merged.sort((a, b) => a.order - b.order);
+        candidates = merged;
+      }
+    } else {
+      candidates = this.allKeyEntries;
+    }
+
+    for (const { key, items } of candidates) {
       for (const fn of fileNameVariations) {
         if (key.endsWith(fn)) {
           if (folderHint) {
