@@ -994,7 +994,7 @@ export function parseConsignmentReportXml(xmlString: string): ReportItem[] {
       items.push({
         id: `REP_D_${rIndex + 1}`,
         title: fullTitle,
-        type: reportName,
+        type: '業務報告書',
         fileName,
         filePath: fileName,
         summary: summaryText,
@@ -1013,8 +1013,8 @@ export function parseConsignmentReportXml(xmlString: string): ReportItem[] {
       if (origFileName) {
         items.push({
           id: `REP_D_${rIndex + 1}_ORIG_${oIdx + 1}`,
-          title: `${reportName} - ${origJpName || origFileName}`,
-          type: reportName,
+          title: origJpName || origFileName,
+          type: '業務報告書',
           fileName: origFileName,
           filePath: origFileName,
           summary: `オリジナルファイル: ${origJpName || origFileName} (${origApp || '原典'})`,
