@@ -1,12 +1,12 @@
 import React, { useRef, useState } from 'react';
 import { 
   FolderArchive, 
+  FolderOpen,
   FolderSearch, 
   Info, 
   Layers, 
   ShieldCheck, 
   Sparkles, 
-  UploadCloud,
   Loader2
 } from 'lucide-react';
 import { loadFromDirectory, loadFromZip } from '../utils/fileLoader';
@@ -150,7 +150,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             </div>
 
             <div className="text-[11px] text-slate-400 space-y-1">
-              <div>・サーバーへのアップロードは行っていません（完全ローカル解析）</div>
+              <div>・外部へのデータ送信は一切行いません（端末内・オフライン解析）</div>
               <div>・INDEX_C.XML / PHOTO / REPORT を自動インデックス化中</div>
             </div>
           </div>
@@ -202,7 +202,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
           }`}
         >
           <div className="w-16 h-16 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-5 shadow-inner">
-            <UploadCloud className="w-8 h-8" />
+            <FolderOpen className="w-8 h-8" />
           </div>
 
           <h3 className="text-lg font-bold text-slate-100 mb-1">
