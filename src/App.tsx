@@ -75,7 +75,7 @@ export const App: React.FC = () => {
       setShowModeSelectModal(false);
     }
 
-    const savedRecords = loadStoredRecords(newDataset.constructionInfo.constructionName);
+    const savedRecords = loadStoredRecords(newDataset.constructionInfo);
     if (savedRecords) {
       setInspectionRecords(savedRecords);
       const count = Object.keys(savedRecords).length;
@@ -110,7 +110,7 @@ export const App: React.FC = () => {
       };
 
       if (dataset) {
-        saveStoredRecords(dataset.constructionInfo.constructionName, updated);
+        saveStoredRecords(dataset.constructionInfo, updated);
       }
 
       return updated;
@@ -170,7 +170,7 @@ export const App: React.FC = () => {
     });
 
     setInspectionRecords(updated);
-    saveStoredRecords(dataset.constructionInfo.constructionName, updated);
+    saveStoredRecords(dataset.constructionInfo, updated);
 
     showToast(`未確認の ${uninspected} 件を一括で「適」に更新しました`, 3500);
   };
@@ -186,7 +186,7 @@ export const App: React.FC = () => {
     if (!confirmed) return;
 
     setInspectionRecords({});
-    clearStoredRecords(dataset.constructionInfo.constructionName);
+    clearStoredRecords(dataset.constructionInfo);
 
     showToast('検査記録をリセットしました', 3000);
   };
@@ -195,7 +195,7 @@ export const App: React.FC = () => {
   const handleImportBackup = (importedRecords: Record<string, InspectionRecord>) => {
     if (!dataset) return;
     setInspectionRecords(importedRecords);
-    saveStoredRecords(dataset.constructionInfo.constructionName, importedRecords);
+    saveStoredRecords(dataset.constructionInfo, importedRecords);
     showToast(`バックアップから ${Object.keys(importedRecords).length} 件の記録を復元しました`, 4000);
   };
 

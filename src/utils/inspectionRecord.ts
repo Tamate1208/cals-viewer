@@ -1,4 +1,4 @@
-import type { DrawingItem, InspectionRecord, PhotoItem, ReportItem } from '../types/cals';
+import type { ConstructionInfo, DrawingItem, InspectionRecord, PhotoItem, ReportItem } from '../types/cals';
 
 /**
  * 写真アイテムから InspectionRecord のメタ情報・初期レコードを生成
@@ -125,18 +125,58 @@ export function resolveRecordMeta(
 
 // ==================== localStorage 入出力 ====================
 
-export function getStorageKey(constructionName: string): string {
-  return `cals_inspection_${constructionName}`;
+/**
+ * 工事名 ＋ 工事番号/設計書コード（契約番号）等による一意キーの生成
+ */
+export function getStorageKey(target: ConstructionInfo | string): string {
+  if (typeof target === 'string') {
+    return `cals_inspection_${target.trim()}`;
+  }
+  const name = target.constructionName.trim();
+  // 1. 工事番号 または 設計書コード（contractNumber に格納）
+  const code = (target.contractNumber || '').trim();
+  // 2. コードが未設定の場合のフォールバック（工期開始日 または 発注者名）
+  const fallback = !code ? (target.startDate || target.clientName || '').trim() : '';
+
+  const suffix = code || fallback;
+  return suffix ? `cals_inspection_${name}_${suffix}` : `cals_inspection_${name}`;
 }
 
-export function loadStoredRecords(constructionName: string): Record<string, InspectionRecord> | null {
+/**
+ * 旧仕様のキー（工事名のみ）を取得（互換性マイグレーション用）
+ */
+export function getLegacyStorageKey(target: ConstructionInfo | string): string {
+  const name = typeof target === 'string' ? target.trim() : target.constructionName.trim();
+  return `cals_inspection_${name}`;
+}
+
+export function loadStoredRecords(target: ConstructionInfo | string): Record<string, InspectionRecord> | null {
   try {
-    const saved = localStorage.getItem(getStorageKey(constructionName));
-    if (!saved) return null;
-    const parsed = JSON.parse(saved);
-    if (isValidInspectionBackup(parsed)) {
-      return parsed;
+    const newKey = getStorageKey(target);
+    const saved = localStorage.getItem(newKey);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (isValidInspectionBackup(parsed)) {
+        return parsed;
+      }
     }
+
+    // 新キーで見つからない場合、旧キー（工事名のみ）からマイグレーション探索
+    const legacyKey = getLegacyStorageKey(target);
+    if (legacyKey !== newKey) {
+      const legacySaved = localStorage.getItem(legacyKey);
+      if (legacySaved) {
+        const parsed = JSON.parse(legacySaved);
+        if (isValidInspectionBackup(parsed)) {
+          // 新キーに移行保存
+          localStorage.setItem(newKey, legacySaved);
+          // 旧キーを整理
+          localStorage.removeItem(legacyKey);
+          return parsed;
+        }
+      }
+    }
+
     return null;
   } catch (e) {
     console.warn('localStorage load failed:', e);
@@ -144,17 +184,23 @@ export function loadStoredRecords(constructionName: string): Record<string, Insp
   }
 }
 
-export function saveStoredRecords(constructionName: string, records: Record<string, InspectionRecord>): void {
+export function saveStoredRecords(target: ConstructionInfo | string, records: Record<string, InspectionRecord>): void {
   try {
-    localStorage.setItem(getStorageKey(constructionName), JSON.stringify(records));
+    const key = getStorageKey(target);
+    localStorage.setItem(key, JSON.stringify(records));
   } catch (e) {
     console.warn('localStorage save failed:', e);
   }
 }
 
-export function clearStoredRecords(constructionName: string): void {
+export function clearStoredRecords(target: ConstructionInfo | string): void {
   try {
-    localStorage.removeItem(getStorageKey(constructionName));
+    const newKey = getStorageKey(target);
+    localStorage.removeItem(newKey);
+    const legacyKey = getLegacyStorageKey(target);
+    if (legacyKey !== newKey) {
+      localStorage.removeItem(legacyKey);
+    }
   } catch (e) {
     console.warn('localStorage remove failed:', e);
   }
