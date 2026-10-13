@@ -9,7 +9,7 @@ import {
   Sparkles, 
   Loader2
 } from 'lucide-react';
-import { loadFromDirectory, loadFromZip } from '../utils/fileLoader';
+import { loadFromDirectory, loadFromZip, scanDroppedDirectory, type DroppedFileEntry } from '../utils/fileLoader';
 import { getSampleHiroshimaDataset } from '../utils/sampleData';
 import type { DeliveryDataset } from '../types/cals';
 
@@ -83,14 +83,15 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     setIsDragOver(false);
 
     const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
+    const items = e.dataTransfer.items;
+    if ((!files || files.length === 0) && (!items || items.length === 0)) return;
 
     try {
       setIsLoading(true);
       setErrorMessage(null);
 
       // ZIPファイルがドロップされた場合
-      if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+      if (files && files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
         setProgressMessage('ZIPアーカイブを展開中...');
         await new Promise(r => setTimeout(r, 80));
         const dataset = await loadFromZip(files[0], (msg) => setProgressMessage(msg));
@@ -99,10 +100,27 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
       }
 
       // フォルダまたは複数ファイル
-      setProgressMessage(`全 ${files.length} 件のファイルを検出しました。解析を開始します...`);
-      await new Promise(r => setTimeout(r, 80));
-      const dataset = await loadFromDirectory(files, (msg) => setProgressMessage(msg));
-      onDatasetLoaded(dataset);
+      setProgressMessage('ドロップされたファイルを走査中...');
+      await new Promise(r => setTimeout(r, 60));
+
+      let entries: DroppedFileEntry[] = [];
+      if (items && items.length > 0) {
+        entries = await scanDroppedDirectory(items, (msg) => setProgressMessage(msg));
+      }
+
+      if (entries.length > 0) {
+        setProgressMessage(`全 ${entries.length} 件のファイルを検出しました。解析を開始します...`);
+        await new Promise(r => setTimeout(r, 80));
+        const dataset = await loadFromDirectory(entries, (msg) => setProgressMessage(msg));
+        onDatasetLoaded(dataset);
+      } else if (files && files.length > 0) {
+        setProgressMessage(`全 ${files.length} 件のファイルを検出しました。解析を開始します...`);
+        await new Promise(r => setTimeout(r, 80));
+        const dataset = await loadFromDirectory(files, (msg) => setProgressMessage(msg));
+        onDatasetLoaded(dataset);
+      } else {
+        throw new Error('読み取り可能なファイルが検出されませんでした。');
+      }
     } catch (err: unknown) {
       console.error(err);
       const msg = err instanceof Error ? err.message : '不明なエラー';

@@ -265,11 +265,89 @@ class FastFileIndex {
   }
 }
 
+export interface DroppedFileEntry {
+  file: File;
+  relativePath: string;
+}
+
+/**
+ * DataTransferItemList (ドラッグ＆ドロップ) から再帰的に全ファイルを走査・収集
+ * 大量ファイル対応: dirReader.readEntries は一度に最大100件までしか返さないため、空になるまでループ走査
+ */
+export async function scanDroppedDirectory(
+  items: DataTransferItemList,
+  onProgress?: (status: string) => void
+): Promise<DroppedFileEntry[]> {
+  const result: DroppedFileEntry[] = [];
+  let scannedCount = 0;
+
+  // FileSystemEntry 型のヘルパー走査関数
+  const scanEntry = async (entry: any, currentPath: string): Promise<void> => {
+    if (!entry) return;
+
+    if (entry.isFile) {
+      await new Promise<void>((resolve) => {
+        entry.file((file: File) => {
+          scannedCount++;
+          if (scannedCount % 50 === 0) {
+            onProgress?.(`フォルダ内を走査中... (${scannedCount} 件検出)`);
+          }
+          result.push({
+            file,
+            relativePath: currentPath ? `${currentPath}/${file.name}` : file.name,
+          });
+          resolve();
+        }, (err: unknown) => {
+          console.warn(`ファイル読み取りスキップ (${entry.name}):`, err);
+          resolve();
+        });
+      });
+    } else if (entry.isDirectory) {
+      const dirReader = entry.createReader();
+      const nextPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+
+      // readEntries は最大100件ずつのバッチで返るため、空になるまで繰り返し読み込む
+      const readAllEntries = async (): Promise<any[]> => {
+        const allEntries: any[] = [];
+        while (true) {
+          const batch = await new Promise<any[]>((resolve) => {
+            dirReader.readEntries(resolve, (err: unknown) => {
+              console.warn(`ディレクトリエントリ読み取りエラー (${entry.name}):`, err);
+              resolve([]);
+            });
+          });
+          if (!batch || batch.length === 0) break;
+          allEntries.push(...batch);
+        }
+        return allEntries;
+      };
+
+      const entries = await readAllEntries();
+      for (const child of entries) {
+        await scanEntry(child, nextPath);
+      }
+    }
+  };
+
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : (item as any).getAsEntry?.();
+    if (entry) {
+      tasks.push(scanEntry(entry, ''));
+    }
+  }
+
+  await Promise.all(tasks);
+  return result;
+}
+
 /**
  * ディレクトリから高速読み込み
+ * FileList (input webkitdirectory) または DroppedFileEntry[] (ドラッグ＆ドロップ) に対応
  */
 export async function loadFromDirectory(
-  fileList: FileList,
+  fileList: FileList | DroppedFileEntry[],
   onProgress?: (status: string) => void
 ): Promise<DeliveryDataset> {
   onProgress?.(`全 ${fileList.length} 件のファイルをインデックス化中...`);
@@ -279,8 +357,18 @@ export async function loadFromDirectory(
 
   const len = fileList.length;
   for (let i = 0; i < len; i++) {
-    const file = fileList[i];
-    const path = file.webkitRelativePath || file.name;
+    const entry = fileList[i];
+    let file: File;
+    let path: string;
+
+    if ('file' in entry) {
+      file = entry.file;
+      path = entry.relativePath || file.name;
+    } else {
+      file = entry;
+      path = (entry as File).webkitRelativePath || file.name;
+    }
+
     const parts = path.split('/');
     if (parts.length > 1 && rootFolderName === '電子納品フォルダ') {
       rootFolderName = parts[0];
