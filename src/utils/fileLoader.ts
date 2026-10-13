@@ -271,15 +271,27 @@ export interface DroppedFileEntry {
 }
 
 /**
- * DataTransferItemList (ドラッグ＆ドロップ) から再帰的に全ファイルを走査・収集
+ * DataTransferItemList または同期抽出済みエントリ配列 (ドラッグ＆ドロップ) から再帰的に全ファイルを走査・収集
  * 大量ファイル対応: dirReader.readEntries は一度に最大100件までしか返さないため、空になるまでループ走査
  */
 export async function scanDroppedDirectory(
-  items: DataTransferItemList,
+  source: DataTransferItemList | any[],
   onProgress?: (status: string) => void
 ): Promise<DroppedFileEntry[]> {
   const result: DroppedFileEntry[] = [];
   let scannedCount = 0;
+
+  // もし DataTransferItemList であれば即座に同期抽出
+  const rawEntries: any[] = [];
+  if (Array.isArray(source)) {
+    rawEntries.push(...source);
+  } else if (source && typeof (source as any).length === 'number') {
+    for (let i = 0; i < (source as any).length; i++) {
+      const item = (source as any)[i];
+      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : (item as any).getAsEntry?.();
+      if (entry) rawEntries.push(entry);
+    }
+  }
 
   // FileSystemEntry 型のヘルパー走査関数
   const scanEntry = async (entry: any, currentPath: string): Promise<void> => {
@@ -330,12 +342,8 @@ export async function scanDroppedDirectory(
   };
 
   const tasks: Promise<void>[] = [];
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : (item as any).getAsEntry?.();
-    if (entry) {
-      tasks.push(scanEntry(entry, ''));
-    }
+  for (const entry of rawEntries) {
+    tasks.push(scanEntry(entry, ''));
   }
 
   await Promise.all(tasks);
@@ -345,6 +353,7 @@ export async function scanDroppedDirectory(
 /**
  * ディレクトリから高速読み込み
  * FileList (input webkitdirectory) または DroppedFileEntry[] (ドラッグ＆ドロップ) に対応
+ * INDEX_C.XML または INDEX_D.XML の階層を基準にルートパスを自動検出・正規化
  */
 export async function loadFromDirectory(
   fileList: FileList | DroppedFileEntry[],
@@ -352,10 +361,14 @@ export async function loadFromDirectory(
 ): Promise<DeliveryDataset> {
   onProgress?.(`全 ${fileList.length} 件のファイルをインデックス化中...`);
 
-  const items: FileItem[] = [];
-  let rootFolderName = '電子納品フォルダ';
-
+  // 1. 各ファイルの正規化パスリストを収集
+  interface RawItem {
+    file: File;
+    rawPath: string;
+  }
+  const rawItems: RawItem[] = [];
   const len = fileList.length;
+
   for (let i = 0; i < len; i++) {
     const entry = fileList[i];
     let file: File;
@@ -363,20 +376,55 @@ export async function loadFromDirectory(
 
     if ('file' in entry) {
       file = entry.file;
-      path = entry.relativePath || file.name;
+      path = (entry.relativePath || file.name).replace(/\\/g, '/');
     } else {
       file = entry;
-      path = (entry as File).webkitRelativePath || file.name;
+      path = ((entry as File).webkitRelativePath || file.name).replace(/\\/g, '/');
     }
+    rawItems.push({ file, rawPath: path });
+  }
 
-    const parts = path.split('/');
-    if (parts.length > 1 && rootFolderName === '電子納品フォルダ') {
+  // 2. INDEX_C.XML または INDEX_D.XML の位置を検出し、ルートプレフィックスを決定
+  let rootPrefix = '';
+  let rootFolderName = '電子納品フォルダ';
+
+  const indexItem = rawItems.find(it => {
+    const nameLower = it.file.name.toLowerCase();
+    return nameLower === 'index_c.xml' || nameLower === 'index_d.xml';
+  });
+
+  if (indexItem) {
+    const lastSlash = indexItem.rawPath.lastIndexOf('/');
+    if (lastSlash !== -1) {
+      rootPrefix = indexItem.rawPath.substring(0, lastSlash + 1); // 末尾のスラッシュを含む
+      const parts = rootPrefix.split('/').filter(Boolean);
+      if (parts.length > 0) {
+        rootFolderName = parts[parts.length - 1];
+      }
+    }
+  } else {
+    // 見つからない場合は最初のファイルの第1階層をフォールバック
+    if (rawItems.length > 0 && rawItems[0].rawPath.includes('/')) {
+      const parts = rawItems[0].rawPath.split('/');
+      rootPrefix = parts[0] + '/';
       rootFolderName = parts[0];
     }
+  }
+
+  // 3. ルートプレフィックスを除去して FileItem を構築
+  const items: FileItem[] = [];
+  for (const it of rawItems) {
+    let relPath = it.rawPath;
+    if (rootPrefix && relPath.startsWith(rootPrefix)) {
+      relPath = relPath.substring(rootPrefix.length);
+    } else if (relPath.includes('/')) {
+      relPath = relPath.replace(/^[^/]+\//, '');
+    }
+
     items.push({
-      name: file.name,
-      relativePath: path.replace(/^[^/]+\//, ''), // トップフォルダ名を除去
-      blob: file,
+      name: it.file.name,
+      relativePath: relPath,
+      blob: it.file,
     });
   }
 

@@ -80,18 +80,27 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
   // ドラッグ＆ドロップ処理
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragOver(false);
 
-    const files = e.dataTransfer.files;
-    const items = e.dataTransfer.items;
-    if ((!files || files.length === 0) && (!items || items.length === 0)) return;
+    // 1. 重要: await を挟む前に、同期的に即座に entries と files を抽出する（ブラウザ破棄対策）
+    const rawEntries: any[] = [];
+    if (e.dataTransfer.items) {
+      for (let i = 0; i < e.dataTransfer.items.length; i++) {
+        const item = e.dataTransfer.items[i];
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : (item as any).getAsEntry?.();
+        if (entry) rawEntries.push(entry);
+      }
+    }
+    const files = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+    if (rawEntries.length === 0 && files.length === 0) return;
 
     try {
       setIsLoading(true);
       setErrorMessage(null);
 
       // ZIPファイルがドロップされた場合
-      if (files && files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+      if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
         setProgressMessage('ZIPアーカイブを展開中...');
         await new Promise(r => setTimeout(r, 80));
         const dataset = await loadFromZip(files[0], (msg) => setProgressMessage(msg));
@@ -104,8 +113,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
       await new Promise(r => setTimeout(r, 60));
 
       let entries: DroppedFileEntry[] = [];
-      if (items && items.length > 0) {
-        entries = await scanDroppedDirectory(items, (msg) => setProgressMessage(msg));
+      if (rawEntries.length > 0) {
+        entries = await scanDroppedDirectory(rawEntries, (msg) => setProgressMessage(msg));
       }
 
       if (entries.length > 0) {
@@ -113,10 +122,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         await new Promise(r => setTimeout(r, 80));
         const dataset = await loadFromDirectory(entries, (msg) => setProgressMessage(msg));
         onDatasetLoaded(dataset);
-      } else if (files && files.length > 0) {
+      } else if (files.length > 0) {
         setProgressMessage(`全 ${files.length} 件のファイルを検出しました。解析を開始します...`);
         await new Promise(r => setTimeout(r, 80));
-        const dataset = await loadFromDirectory(files, (msg) => setProgressMessage(msg));
+        const dataset = await loadFromDirectory(files as unknown as FileList, (msg) => setProgressMessage(msg));
         onDatasetLoaded(dataset);
       } else {
         throw new Error('読み取り可能なファイルが検出されませんでした。');
@@ -142,7 +151,16 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-950 text-slate-100 overflow-y-auto relative">
+    <div 
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setIsDragOver(false);
+        }
+      }}
+      onDrop={handleDrop}
+      className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-950 text-slate-100 overflow-y-auto relative"
+    >
       {/* 全画面ローディングオーバーレイ（ファイル選択後、確実に表示される） */}
       {isLoading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 animate-in fade-in duration-150">
