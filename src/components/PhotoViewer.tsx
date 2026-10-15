@@ -127,7 +127,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
     }
   }, [filteredPhotos, sortOrder]);
 
-  // 選択された写真が現在のフィルターで非表示になっている場合、フィルターを解除（レンダー中同期調整）
+  // 選択された写真が現在のフィルターで非表示になっている場合、フィルター（検索含む）を解除（レンダー中同期調整）
   const [prevSelectedId, setPrevSelectedId] = useState<string | null>(null);
   if (selectedPhotoId !== prevSelectedId) {
     setPrevSelectedId(selectedPhotoId);
@@ -140,67 +140,26 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
         if (selectedWorkType !== 'all' && photo.workType !== selectedWorkType) {
           setSelectedWorkType('all');
         }
+        if (searchQuery.trim() !== '') {
+          setSearchQuery('');
+        }
       }
     }
   }
 
-  // 選択された写真が変わった時、その写真カードの位置へスムーズスクロール
-  // （content-visibilityやLayout Shiftによるズレを自動補正する精密スクロール）
+  // 選択された写真が変わった時、その写真カードを画面中央へ確実にスムーズスクロール
   useEffect(() => {
     if (!selectedPhotoId) return;
 
-    let isCancelled = false;
-    let verifyTimer: any = null;
-
-    const scrollToTarget = () => {
-      const container = scrollContainerRef.current;
-      if (!container || isCancelled) return;
-
-      const doc = container.ownerDocument || document;
+    const timer = setTimeout(() => {
+      const doc = scrollContainerRef.current?.ownerDocument || document;
       const el = doc.getElementById(`photo-card-${selectedPhotoId}`);
-      if (!el) return;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 40);
 
-      // コンテナ内の相対位置から、カードがコンテナ中央に来る目標 scrollTop を正確に算出
-      const containerRect = container.getBoundingClientRect();
-      const elRect = el.getBoundingClientRect();
-      const currentScrollTop = container.scrollTop;
-      const targetScrollTop = currentScrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2);
-
-      // スムーズスクロール実行
-      container.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: 'smooth',
-      });
-
-      // content-visibility: auto や画像の読み込みによる高さ変動（Layout Shift）を吸収するため、
-      // スクロール完了後にズレがないか再確認し、中央から外れていればピタリと補正する
-      verifyTimer = setTimeout(() => {
-        if (isCancelled || !scrollContainerRef.current) return;
-        const currentEl = doc.getElementById(`photo-card-${selectedPhotoId}`);
-        if (!currentEl) return;
-
-        const cRect = container.getBoundingClientRect();
-        const eRect = currentEl.getBoundingClientRect();
-        const diff = (eRect.top + eRect.height / 2) - (cRect.top + cRect.height / 2);
-
-        // 許容誤差 35px 以上ズレていたら最終補正
-        if (Math.abs(diff) > 35) {
-          container.scrollTo({
-            top: Math.max(0, container.scrollTop + diff),
-            behavior: 'auto',
-          });
-        }
-      }, 350);
-    };
-
-    // DOMレンダリング及びフィルタ解除（全表示戻し）の反映を待ってスクロール開始
-    const initialTimer = setTimeout(scrollToTarget, 60);
-
-    return () => {
-      isCancelled = true;
-      clearTimeout(initialTimer);
-      if (verifyTimer) clearTimeout(verifyTimer);
-    };
+    return () => clearTimeout(timer);
   }, [selectedPhotoId, sortedFilteredPhotos]);
 
   // ライトボックスが開いた時にEscキーで閉じる（別窓でも確実に動作するよう所属ウィンドウに登録）
@@ -385,7 +344,6 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
                   key={photo.id}
                   id={`photo-card-${photo.id}`}
                   onClick={() => setSelectedPhotoId(photo.id)}
-                  style={{ contentVisibility: 'auto', containIntrinsicSize: '400px', minHeight: '380px' }}
                   className={`bg-slate-900 border rounded-xl overflow-hidden shadow-xl transition flex flex-col cursor-pointer ${
                     isSelected
                       ? 'border-blue-500 ring-2 ring-blue-500/50 shadow-blue-500/10'
