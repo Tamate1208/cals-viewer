@@ -145,20 +145,62 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
   }
 
   // 選択された写真が変わった時、その写真カードの位置へスムーズスクロール
-  // （別窓内でも動作するよう、scrollContainerRef の ownerDocument を参照）
+  // （content-visibilityやLayout Shiftによるズレを自動補正する精密スクロール）
   useEffect(() => {
     if (!selectedPhotoId) return;
 
-    // DOMレンダリング及びフィルタ解除（全表示戻し）の反映を待って確実にスクロール
-    const timer = setTimeout(() => {
-      const doc = scrollContainerRef.current?.ownerDocument || document;
-      const el = doc.getElementById(`photo-card-${selectedPhotoId}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }, 50);
+    let isCancelled = false;
+    let verifyTimer: any = null;
 
-    return () => clearTimeout(timer);
+    const scrollToTarget = () => {
+      const container = scrollContainerRef.current;
+      if (!container || isCancelled) return;
+
+      const doc = container.ownerDocument || document;
+      const el = doc.getElementById(`photo-card-${selectedPhotoId}`);
+      if (!el) return;
+
+      // コンテナ内の相対位置から、カードがコンテナ中央に来る目標 scrollTop を正確に算出
+      const containerRect = container.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      const currentScrollTop = container.scrollTop;
+      const targetScrollTop = currentScrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2);
+
+      // スムーズスクロール実行
+      container.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: 'smooth',
+      });
+
+      // content-visibility: auto や画像の読み込みによる高さ変動（Layout Shift）を吸収するため、
+      // スクロール完了後にズレがないか再確認し、中央から外れていればピタリと補正する
+      verifyTimer = setTimeout(() => {
+        if (isCancelled || !scrollContainerRef.current) return;
+        const currentEl = doc.getElementById(`photo-card-${selectedPhotoId}`);
+        if (!currentEl) return;
+
+        const cRect = container.getBoundingClientRect();
+        const eRect = currentEl.getBoundingClientRect();
+        const diff = (eRect.top + eRect.height / 2) - (cRect.top + cRect.height / 2);
+
+        // 許容誤差 35px 以上ズレていたら最終補正
+        if (Math.abs(diff) > 35) {
+          container.scrollTo({
+            top: Math.max(0, container.scrollTop + diff),
+            behavior: 'auto',
+          });
+        }
+      }, 350);
+    };
+
+    // DOMレンダリング及びフィルタ解除（全表示戻し）の反映を待ってスクロール開始
+    const initialTimer = setTimeout(scrollToTarget, 60);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(initialTimer);
+      if (verifyTimer) clearTimeout(verifyTimer);
+    };
   }, [selectedPhotoId, sortedFilteredPhotos]);
 
   // ライトボックスが開いた時にEscキーで閉じる
@@ -309,7 +351,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
       {/* ==================== 連続スクロール写真グリッド ==================== */}
       <div 
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto p-3 sm:p-4 bg-slate-950 scroll-smooth"
+        className="flex-1 overflow-y-auto p-3 sm:p-4 bg-slate-950"
       >
         {sortedFilteredPhotos.length === 0 ? (
           <div className="p-16 text-center text-slate-500 text-sm flex flex-col items-center">
@@ -334,7 +376,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
                   key={photo.id}
                   id={`photo-card-${photo.id}`}
                   onClick={() => setSelectedPhotoId(photo.id)}
-                  style={{ contentVisibility: 'auto', containIntrinsicSize: '400px' }}
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: '400px', minHeight: '380px' }}
                   className={`bg-slate-900 border rounded-xl overflow-hidden shadow-xl transition flex flex-col cursor-pointer ${
                     isSelected
                       ? 'border-blue-500 ring-2 ring-blue-500/50 shadow-blue-500/10'
