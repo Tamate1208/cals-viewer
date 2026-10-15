@@ -163,12 +163,18 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
   const isDraggingRef = React.useRef(false);
 
   // リサイズドラッグハンドラ (ドラッグ中はDOM直接操作で60fps超高速描画・マウスアップ時のみstate確定)
+  // メイン画面および別窓（SubWindowPortal）の両方で正常動作するよう、所属ウィンドウとドキュメントを参照
   const startResizing = (e: React.MouseEvent) => {
     e.preventDefault();
     isDraggingRef.current = true;
     setIsResizing(true);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+
+    const doc = treeRef.current?.ownerDocument || document;
+    const win = doc.defaultView || window;
+    const parentWin = window;
+
+    doc.body.style.cursor = 'col-resize';
+    doc.body.style.userSelect = 'none';
 
     const startX = e.clientX;
     const startWidth = treeRef.current ? treeRef.current.getBoundingClientRect().width : treeWidth;
@@ -177,7 +183,7 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingRef.current) return;
       const deltaX = moveEvent.clientX - startX;
-      const maxAllowed = Math.min(window.innerWidth * 0.75, 850);
+      const maxAllowed = Math.min((win.innerWidth || 1200) * 0.75, 850);
       const newWidth = Math.max(220, Math.min(startWidth + deltaX, maxAllowed));
       currentWidth = newWidth;
       if (treeRef.current) {
@@ -189,10 +195,16 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
       if (!isDraggingRef.current) return;
       isDraggingRef.current = false;
       setIsResizing(false);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', handleMouseMove, true);
-      window.removeEventListener('mouseup', handleMouseUp, true);
+      doc.body.style.cursor = '';
+      doc.body.style.userSelect = '';
+
+      win.removeEventListener('mousemove', handleMouseMove, true);
+      win.removeEventListener('mouseup', handleMouseUp, true);
+      if (parentWin !== win) {
+        parentWin.removeEventListener('mousemove', handleMouseMove, true);
+        parentWin.removeEventListener('mouseup', handleMouseUp, true);
+      }
+
       setTreeWidth(currentWidth);
       try {
         localStorage.setItem('cals_tree_nav_width', String(currentWidth));
@@ -201,8 +213,12 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
       }
     };
 
-    window.addEventListener('mousemove', handleMouseMove, true);
-    window.addEventListener('mouseup', handleMouseUp, true);
+    win.addEventListener('mousemove', handleMouseMove, true);
+    win.addEventListener('mouseup', handleMouseUp, true);
+    if (parentWin !== win) {
+      parentWin.addEventListener('mousemove', handleMouseMove, true);
+      parentWin.addEventListener('mouseup', handleMouseUp, true);
+    }
   };
 
   // 幅リセットハンドラ（ダブルクリックで288pxに戻す）

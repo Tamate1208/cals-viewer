@@ -203,7 +203,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
     };
   }, [selectedPhotoId, sortedFilteredPhotos]);
 
-  // ライトボックスが開いた時にEscキーで閉じる
+  // ライトボックスが開いた時にEscキーで閉じる（別窓でも確実に動作するよう所属ウィンドウに登録）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -211,9 +211,18 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
       }
     };
     if (lightboxPhoto) {
-      window.addEventListener('keydown', handleKeyDown);
+      const win = scrollContainerRef.current?.ownerDocument.defaultView || window;
+      win.addEventListener('keydown', handleKeyDown);
+      if (window !== win) {
+        window.addEventListener('keydown', handleKeyDown);
+      }
+      return () => {
+        win.removeEventListener('keydown', handleKeyDown);
+        if (window !== win) {
+          window.removeEventListener('keydown', handleKeyDown);
+        }
+      };
     }
-    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [lightboxPhoto]);
 
   // 検査ステータス更新
@@ -326,7 +335,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
           </div>
 
           <button
-            onClick={() => window.print()}
+            onClick={() => (scrollContainerRef.current?.ownerDocument.defaultView || window).print()}
             className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800 text-xs text-slate-300 hover:text-white transition shrink-0"
             title="写真台帳を印刷・PDF保存"
           >
