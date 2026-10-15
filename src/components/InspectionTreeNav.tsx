@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ChevronDown, 
   ChevronRight, 
@@ -144,6 +144,63 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   const activeTab = viewMode ? (viewMode === 'photo-only' ? 'photos' : 'docs') : internalTab;
   const [photoTreeMode, setPhotoTreeMode] = useState<'workTree' | 'timeline' | 'category' | 'station'>('workTree');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // ツリーパネルの幅（デフォルト288px、localStorageに保存・復元、最小220px〜最大650px）
+  const [treeWidth, setTreeWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('cals_tree_nav_width');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 220 && val <= 700) return val;
+      }
+    } catch {
+      // ignore
+    }
+    return 288;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+
+  // リサイズドラッグハンドラ
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const maxAllowed = Math.min(window.innerWidth * 0.6, 700);
+      const newWidth = Math.max(220, Math.min(e.clientX, maxAllowed));
+      setTreeWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      try {
+        localStorage.setItem('cals_tree_nav_width', String(treeWidth));
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing, treeWidth]);
+
+  // 幅リセットハンドラ（ダブルクリックで288pxに戻す）
+  const handleResetWidth = () => {
+    setTreeWidth(288);
+    try {
+      localStorage.setItem('cals_tree_nav_width', '288');
+    } catch {
+      // ignore
+    }
+  };
 
   // タブ切り替えハンドラ
   const handleTabChange = (tab: 'docs' | 'photos') => {
@@ -1055,7 +1112,26 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   const totalPhotosCount = photos.length;
 
   return (
-    <div className="w-64 sm:w-72 bg-slate-950 border-r border-slate-800 flex flex-col h-full select-none shrink-0 z-20">
+    <div
+      style={{ width: `${treeWidth}px` }}
+      className="relative bg-slate-950 border-r border-slate-800 flex flex-col h-full select-none shrink-0 z-20 group/tree"
+    >
+      {/* 右端リサイズスプリッターハンドル (ドラッグで幅変更 / ダブルクリックでリセット) */}
+      <div
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setIsResizing(true);
+        }}
+        onDoubleClick={handleResetWidth}
+        className={`absolute top-0 -right-1 w-2.5 h-full cursor-col-resize z-30 flex items-center justify-center transition-colors ${
+          isResizing ? 'bg-blue-500/40' : 'hover:bg-blue-500/25'
+        }`}
+        title="ドラッグでツリー幅を変更 / ダブルクリックで標準幅(288px)にリセット"
+      >
+        <div className={`w-0.5 h-8 rounded-full transition-colors ${
+          isResizing ? 'bg-blue-400' : 'bg-slate-700/60 hover:bg-blue-400'
+        }`} />
+      </div>
       {/* ツリーヘッダー */}
       <div className="p-2.5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900/40">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
