@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   ChevronDown, 
   ChevronRight, 
@@ -121,7 +121,7 @@ const PHOTO_CATEGORY_ORDER = [
   'その他'
 ];
 
-export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
+const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
   reports,
   drawings,
   photos,
@@ -159,42 +159,55 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     return 288;
   });
   const [isResizing, setIsResizing] = useState(false);
+  const treeRef = React.useRef<HTMLDivElement>(null);
+  const isDraggingRef = React.useRef(false);
 
-  // リサイズドラッグハンドラ
-  useEffect(() => {
-    if (!isResizing) return;
+  // リサイズドラッグハンドラ (ドラッグ中はDOM直接操作で60fps超高速描画・マウスアップ時のみstate確定)
+  const startResizing = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    setIsResizing(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
 
-    const handleMouseMove = (e: MouseEvent) => {
+    let currentWidth = treeWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDraggingRef.current) return;
       const maxAllowed = Math.min(window.innerWidth * 0.6, 700);
-      const newWidth = Math.max(220, Math.min(e.clientX, maxAllowed));
-      setTreeWidth(newWidth);
+      const newWidth = Math.max(220, Math.min(moveEvent.clientX, maxAllowed));
+      currentWidth = newWidth;
+      if (treeRef.current) {
+        treeRef.current.style.width = `${newWidth}px`;
+      }
     };
 
     const handleMouseUp = () => {
+      if (!isDraggingRef.current) return;
+      isDraggingRef.current = false;
       setIsResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      setTreeWidth(currentWidth);
       try {
-        localStorage.setItem('cals_tree_nav_width', String(treeWidth));
+        localStorage.setItem('cals_tree_nav_width', String(currentWidth));
       } catch {
         // ignore
       }
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [isResizing, treeWidth]);
+    window.addEventListener('mousemove', handleMouseMove, { passive: true });
+    window.addEventListener('mouseup', handleMouseUp, { once: true });
+  };
 
   // 幅リセットハンドラ（ダブルクリックで288pxに戻す）
   const handleResetWidth = () => {
     setTreeWidth(288);
+    if (treeRef.current) {
+      treeRef.current.style.width = '288px';
+    }
     try {
       localStorage.setItem('cals_tree_nav_width', '288');
     } catch {
@@ -906,6 +919,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
         <button
           key={item.id}
           onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+          style={{ contentVisibility: 'auto', containIntrinsicSize: '28px' }}
           className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
             isSelected
               ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
@@ -1023,6 +1037,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
                 <button
                   key={item.id}
                   onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: '24px' }}
                   className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
                     isSubSelected
                       ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
@@ -1077,6 +1092,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
                         <button
                           key={item.id}
                           onClick={() => onSelectReport(item.id)}
+                          style={{ contentVisibility: 'auto', containIntrinsicSize: '24px' }}
                           className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
                             isSubSelected
                               ? 'bg-indigo-600/25 text-indigo-300 font-semibold border border-indigo-500/40'
@@ -1113,15 +1129,13 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
 
   return (
     <div
+      ref={treeRef}
       style={{ width: `${treeWidth}px` }}
       className="relative bg-slate-950 border-r border-slate-800 flex flex-col h-full select-none shrink-0 z-20 group/tree"
     >
       {/* 右端リサイズスプリッターハンドル (ドラッグで幅変更 / ダブルクリックでリセット) */}
       <div
-        onMouseDown={(e) => {
-          e.preventDefault();
-          setIsResizing(true);
-        }}
+        onMouseDown={startResizing}
         onDoubleClick={handleResetWidth}
         className={`absolute top-0 -right-1 w-2.5 h-full cursor-col-resize z-30 flex items-center justify-center transition-colors ${
           isResizing ? 'bg-blue-500/40' : 'hover:bg-blue-500/25'
@@ -1400,6 +1414,7 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
                   <button
                     key={photo.id}
                     onClick={() => onSelectPhoto(photo.id)}
+                    style={{ contentVisibility: 'auto', containIntrinsicSize: '36px' }}
                     className={`w-full text-left p-1.5 rounded flex items-start gap-1.5 transition ${
                       isSelected
                         ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40 shadow-sm'
@@ -1858,3 +1873,5 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     </div>
   );
 };
+
+export const InspectionTreeNav = React.memo(InspectionTreeNavComponent);

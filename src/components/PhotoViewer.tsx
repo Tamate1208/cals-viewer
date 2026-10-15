@@ -334,6 +334,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
                   key={photo.id}
                   id={`photo-card-${photo.id}`}
                   onClick={() => setSelectedPhotoId(photo.id)}
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: '400px' }}
                   className={`bg-slate-900 border rounded-xl overflow-hidden shadow-xl transition flex flex-col cursor-pointer ${
                     isSelected
                       ? 'border-blue-500 ring-2 ring-blue-500/50 shadow-blue-500/10'

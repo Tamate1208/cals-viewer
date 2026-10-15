@@ -90,16 +90,58 @@ export const App: React.FC = () => {
   };
 
   // ツリーから書類を選択
-  const handleTreeSelectReport = (id: string) => {
+  const handleTreeSelectReport = useCallback((id: string) => {
     setSelectedReportId(id);
     setDocTab('reports');
-  };
+  }, []);
 
   // ツリーから図面を選択
-  const handleTreeSelectDrawing = (id: string) => {
+  const handleTreeSelectDrawing = useCallback((id: string) => {
     setSelectedDrawingId(id);
     setDocTab('drawings');
-  };
+  }, []);
+
+  // メイン画面ツリー用コールバック (useCallbackでメモ化し無駄な再レンダリングを遮断)
+  const handleSelectIndexMain = useCallback(() => {
+    setDocTab('index');
+    setViewMode('doc-only');
+  }, []);
+
+  const handleSelectReportMain = useCallback((id: string) => {
+    handleTreeSelectReport(id);
+    setViewMode('doc-only');
+  }, [handleTreeSelectReport]);
+
+  const handleSelectDrawingMain = useCallback((id: string) => {
+    handleTreeSelectDrawing(id);
+    setViewMode('doc-only');
+  }, [handleTreeSelectDrawing]);
+
+  const handleSelectPhotoMain = useCallback((id: string) => {
+    setSelectedPhotoId(id);
+    setViewMode('photo-only');
+  }, []);
+
+  // サブウィンドウ画面ツリー用コールバック
+  const handleSelectIndexSub = useCallback(() => {
+    setDocTab('index');
+    setSubWindowMode('doc-only');
+  }, []);
+
+  const handleSelectReportSub = useCallback((id: string) => {
+    handleTreeSelectReport(id);
+    setSubWindowMode('doc-only');
+  }, [handleTreeSelectReport]);
+
+  const handleSelectDrawingSub = useCallback((id: string) => {
+    handleTreeSelectDrawing(id);
+    setSubWindowMode('doc-only');
+  }, [handleTreeSelectDrawing]);
+
+  const handleSelectPhotoSub = useCallback((id: string) => {
+    setSelectedPhotoId(id);
+    setSubWindowMode('photo-only');
+  }, []);
 
   // 検査記録の更新 ＆ localStorage 保存
   const handleUpdateInspection = (record: InspectionRecord) => {
@@ -254,22 +296,10 @@ export const App: React.FC = () => {
               inspectionRecords={inspectionRecords}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
-              onSelectIndex={() => {
-                setDocTab('index');
-                setViewMode('doc-only');
-              }}
-              onSelectReport={(id) => {
-                handleTreeSelectReport(id);
-                setViewMode('doc-only');
-              }}
-              onSelectDrawing={(id) => {
-                handleTreeSelectDrawing(id);
-                setViewMode('doc-only');
-              }}
-              onSelectPhoto={(id) => {
-                setSelectedPhotoId(id);
-                setViewMode('photo-only');
-              }}
+              onSelectIndex={handleSelectIndexMain}
+              onSelectReport={handleSelectReportMain}
+              onSelectDrawing={handleSelectDrawingMain}
+              onSelectPhoto={handleSelectPhotoMain}
             />
 
             {/* メイン: 書類または写真の全画面ビュー（左右分離を完全廃止） */}
@@ -473,23 +503,11 @@ export const App: React.FC = () => {
                     isIndexSelected={docTab === 'index'}
                     inspectionRecords={inspectionRecords}
                     viewMode={subWindowMode}
-                    onViewModeChange={(mode) => setSubWindowMode(mode)}
-                    onSelectIndex={() => {
-                      setDocTab('index');
-                      setSubWindowMode('doc-only');
-                    }}
-                    onSelectReport={(id) => {
-                      handleTreeSelectReport(id);
-                      setSubWindowMode('doc-only');
-                    }}
-                    onSelectDrawing={(id) => {
-                      handleTreeSelectDrawing(id);
-                      setSubWindowMode('doc-only');
-                    }}
-                    onSelectPhoto={(id) => {
-                      setSelectedPhotoId(id);
-                      setSubWindowMode('photo-only');
-                    }}
+                    onViewModeChange={setSubWindowMode}
+                    onSelectIndex={handleSelectIndexSub}
+                    onSelectReport={handleSelectReportSub}
+                    onSelectDrawing={handleSelectDrawingSub}
+                    onSelectPhoto={handleSelectPhotoSub}
                   />
                   <div className="flex-1 flex overflow-hidden">
                     {subWindowMode === 'doc-only' ? (
