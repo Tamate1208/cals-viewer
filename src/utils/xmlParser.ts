@@ -621,8 +621,30 @@ export function parseReportXml(xmlString: string): ReportItem[] {
     const serial = getElementText(node, 'シリアル番号', 'serial_number');
     const meetName = getElementText(node, '打合せ簿名称', '名称', 'name', 'title') || `打合せ簿 ${mIndex + 1}`;
     const meetClass = getElementText(node, '工事帳票種類', '打合せ簿種類', '帳票種類', 'type') || '打合せ簿';
+    const rawProposal = getElementText(node, '発議事項', '発議事項区分', '発議区分', '発議事項区分名称', '発議項目');
     const rawDate = getElementText(node, '発行日付', '受理日付', '作成日', 'date');
     const date = normalizeCalsDate(rawDate);
+
+    // 発議事項の推定・正規化 (協議, 承諾, 指示, 提出, 報告, 連絡, 立会, 確認 等)
+    const inferProposal = (raw: string, name: string, cls: string): string => {
+      const combined = `${raw} ${cls} ${name}`.trim();
+      if (/指示/.test(combined)) return '指示';
+      if (/承諾|承認|認可/.test(combined)) return '承諾';
+      if (/協議/.test(combined)) return '協議';
+      if (/提出|届出|申請|願/.test(combined)) return '提出';
+      if (/報告|週報|月報/.test(combined)) return '報告';
+      if (/連絡|通知/.test(combined)) return '連絡';
+      if (/立会/.test(combined)) return '立会';
+      if (/確認|検測/.test(combined)) return '確認';
+      if (/^1$|^01$/.test(raw)) return '指示';
+      if (/^2$|^02$/.test(raw)) return '承諾';
+      if (/^3$|^03$/.test(raw)) return '協議';
+      if (/^4$|^04$/.test(raw)) return '提出';
+      if (/^5$|^05$/.test(raw)) return '報告';
+      if (/^6$|^06$/.test(raw)) return '連絡';
+      return raw || '協議・その他';
+    };
+    const proposal = inferProposal(rawProposal, meetName, meetClass);
 
     // <オリジナルファイル情報> が複数ある場合がある
     const fileInfos = findDescendantElements(node, 'オリジナルファイル情報');
@@ -639,13 +661,14 @@ export function parseReportXml(xmlString: string): ReportItem[] {
           items.push({
             id: `MEET_${serial || mIndex + 1}_${fIdx + 1}`,
             title: `${meetName}${detailSuffix}`,
-            type: meetClass,
+            type: '打合せ簿',
             fileName,
             filePath: fileName,
             createDate: date,
-            summary: `${meetClass} / ${meetName} ${detailSuffix}`,
+            summary: `打合せ簿 [${proposal}] / ${meetName} ${detailSuffix}`,
             groupTitle: meetName,
             fileRole: role,
+            proposalItem: proposal,
           });
         }
       });
@@ -655,13 +678,14 @@ export function parseReportXml(xmlString: string): ReportItem[] {
         items.push({
           id: `MEET_${serial || mIndex + 1}`,
           title: meetName,
-          type: meetClass,
+          type: '打合せ簿',
           fileName,
           filePath: fileName,
           createDate: date,
-          summary: `${meetClass} / ${meetName}`,
+          summary: `打合せ簿 [${proposal}] / ${meetName}`,
           groupTitle: meetName,
           fileRole: '鑑・本文',
+          proposalItem: proposal,
         });
       }
     }

@@ -50,6 +50,7 @@ export interface ReportItem {
   summary?: string;               // 要約・概要
   groupTitle?: string;            // 帳票グループ名称 (例: 9月度履行報告書, 施工計画書(当初))
   fileRole?: string;              // ファイル役割 (鑑 / 本文 / 添付資料 等)
+  proposalItem?: string;          // 発議事項 (協議, 承諾, 指示, 提出, 報告, 連絡, 確認, 立会 等)
 }
 
 export interface DrawingItem {

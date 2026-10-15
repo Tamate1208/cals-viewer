@@ -56,6 +56,57 @@ const DOC_CATEGORY_ORDER = [
   'その他'
 ];
 
+// 打合せ簿の発議事項規定順序 (重要度・業務進行順)
+const PROPOSAL_ITEM_ORDER = [
+  '協議',
+  '指示',
+  '承諾',
+  '提出',
+  '報告',
+  '連絡',
+  '立会',
+  '確認',
+  '協議・その他',
+  'その他'
+];
+
+// 発議事項バッジの装飾ヘルパー
+const getProposalBadge = (proposal?: string) => {
+  if (!proposal) return null;
+  if (/指示/.test(proposal)) {
+    return { label: proposal, cls: 'bg-purple-500/20 text-purple-300 border-purple-500/40' };
+  }
+  if (/承諾|承認/.test(proposal)) {
+    return { label: proposal, cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
+  }
+  if (/協議/.test(proposal)) {
+    return { label: proposal, cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' };
+  }
+  if (/提出|届/.test(proposal)) {
+    return { label: proposal, cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
+  }
+  if (/報告|週報|月報/.test(proposal)) {
+    return { label: proposal, cls: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' };
+  }
+  if (/立会|確認/.test(proposal)) {
+    return { label: proposal, cls: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
+  }
+  return { label: proposal, cls: 'bg-slate-700/60 text-slate-300 border-slate-600' };
+};
+
+interface DocGroupItem {
+  type: 'report' | 'drawing';
+  items: (ReportItem | DrawingItem)[];
+  proposalItem?: string;
+}
+
+interface DocCategoryContainer {
+  totalCount: number;
+  isMeetCategory: boolean;
+  proposalMap?: Record<string, Record<string, DocGroupItem>>;
+  directMap?: Record<string, DocGroupItem>;
+}
+
 // 要領に準拠した写真区分の規定順序 (デジタル写真管理情報基準)
 const PHOTO_CATEGORY_ORDER = [
   '着手前及び完成写真',
@@ -121,12 +172,24 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   const handleExpandAll = () => {
     const allKeys: Record<string, boolean> = {};
     // 書類キー
-    Object.entries(docGroups).forEach(([cat, groupMap]) => {
+    Object.entries(docGroups).forEach(([cat, catObj]) => {
       allKeys[`doc_cat_${cat}`] = true;
-      Object.keys(groupMap).forEach(gt => {
-        allKeys[`doc_sub_${cat}_${gt}`] = true;
-        allKeys[`doc_orig_${cat}_${gt}`] = true;
-      });
+      if (catObj.proposalMap) {
+        Object.entries(catObj.proposalMap).forEach(([prop, groupMap]) => {
+          allKeys[`doc_prop_${cat}_${prop}`] = true;
+          Object.keys(groupMap).forEach(gt => {
+            allKeys[`doc_sub_${cat}_${prop}_${gt}`] = true;
+            allKeys[`doc_sub_${cat}_${gt}`] = true;
+            allKeys[`doc_orig_${cat}_${gt}`] = true;
+          });
+        });
+      }
+      if (catObj.directMap) {
+        Object.keys(catObj.directMap).forEach(gt => {
+          allKeys[`doc_sub_${cat}_${gt}`] = true;
+          allKeys[`doc_orig_${cat}_${gt}`] = true;
+        });
+      }
     });
     // 写真キー (写真区分 > 工種/種別 > 細別/項目)
     Object.entries(photoGroups).forEach(([cat, wtMap]) => {
@@ -147,10 +210,8 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
   };
 
   // ==================== 書類ツリーの要領準拠階層化 ====================
-  // 大分類 (要領規定順) -> 帳票件名 (作成日時系列順 / XML定義順) -> [鑑・正本PDF(先頭), 本文/別添, オリジナル原典]
+  // 大分類 (要領規定順) -> 打合せ簿の場合は発議事項 -> 帳票件名 (作成日時系列順 / XML定義順) -> [鑑・正本PDF(先頭), 本文/別添, オリジナル原典]
   const docGroups = useMemo(() => {
-    const rawGroups: Record<string, Record<string, { type: 'report' | 'drawing'; items: (ReportItem | DrawingItem)[] }>> = {};
-
     // 書類を作成日の時系列（昇順）でソート。日付が同日・未設定の場合はXML記載順（インデックス順）を維持
     const sortedReports = reports.map((item, originalIndex) => ({ item, originalIndex }))
       .sort((a, b) => {
@@ -166,28 +227,56 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
       })
       .map(({ item }) => item);
 
-    sortedReports.forEach(r => {
-      const typeName = r.type || '一般書類';
-      const groupName = r.groupTitle || r.title || '書類';
+    const rawCategories: Record<string, DocCategoryContainer> = {};
 
-      if (!rawGroups[typeName]) {
-        rawGroups[typeName] = {};
+    sortedReports.forEach(r => {
+      // 打合せ簿判定: r.typeが打合せ簿、またはタイトルに打合せ簿が含まれる場合
+      const isMeet = Boolean((r.type && r.type.includes('打合せ')) || (r.title && r.title.includes('打合せ簿')));
+      const typeName = isMeet ? '打合せ簿' : (r.type || '一般書類');
+      const groupName = r.groupTitle || r.title || '書類';
+      const proposal = r.proposalItem || '協議・その他';
+
+      if (!rawCategories[typeName]) {
+        rawCategories[typeName] = {
+          totalCount: 0,
+          isMeetCategory: isMeet,
+          proposalMap: isMeet ? {} : undefined,
+          directMap: isMeet ? undefined : {},
+        };
       }
-      if (!rawGroups[typeName][groupName]) {
-        rawGroups[typeName][groupName] = { type: 'report', items: [] };
+
+      const catObj = rawCategories[typeName];
+      catObj.totalCount += 1;
+
+      if (catObj.isMeetCategory && catObj.proposalMap) {
+        if (!catObj.proposalMap[proposal]) {
+          catObj.proposalMap[proposal] = {};
+        }
+        if (!catObj.proposalMap[proposal][groupName]) {
+          catObj.proposalMap[proposal][groupName] = { type: 'report', items: [], proposalItem: proposal };
+        }
+        catObj.proposalMap[proposal][groupName].items.push(r);
+      } else if (catObj.directMap) {
+        if (!catObj.directMap[groupName]) {
+          catObj.directMap[groupName] = { type: 'report', items: [] };
+        }
+        catObj.directMap[groupName].items.push(r);
       }
-      rawGroups[typeName][groupName].items.push(r);
     });
 
     if (drawings.length > 0) {
-      rawGroups['完成図面・設計図'] = {
-        '完成図面一式': { type: 'drawing', items: [...drawings] },
+      rawCategories['完成図面・設計図'] = {
+        totalCount: drawings.length,
+        isMeetCategory: false,
+        directMap: {
+          '完成図面一式': { type: 'drawing', items: [...drawings] },
+        },
       };
     }
 
     // 各帳票内で「鑑」「報告書(PDF)」「電子柱状図PDF」を先頭、次に本文・別添、最後にオリジナル原典にソート
-    Object.values(rawGroups).forEach(groupMap => {
-      Object.values(groupMap).forEach(data => {
+    Object.values(rawCategories).forEach(catObj => {
+      const sortItems = (data: DocGroupItem) => {
         data.items.sort((a, b) => {
           const getPriority = (item: ReportItem | DrawingItem) => {
             if ('fileRole' in item) {
@@ -199,12 +288,21 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
           };
           return getPriority(a) - getPriority(b);
         });
-      });
+      };
+
+      if (catObj.proposalMap) {
+        Object.values(catObj.proposalMap).forEach(groupMap => {
+          Object.values(groupMap).forEach(sortItems);
+        });
+      }
+      if (catObj.directMap) {
+        Object.values(catObj.directMap).forEach(sortItems);
+      }
     });
 
     // 大分類を要領規定順にソートして再格納
-    const sortedGroups: Record<string, typeof rawGroups[string]> = {};
-    const sortedCatNames = Object.keys(rawGroups).sort((a, b) => {
+    const sortedCategories: Record<string, DocCategoryContainer> = {};
+    const sortedCatNames = Object.keys(rawCategories).sort((a, b) => {
       const idxA = DOC_CATEGORY_ORDER.findIndex(o => a.includes(o) || o.includes(a));
       const idxB = DOC_CATEGORY_ORDER.findIndex(o => b.includes(o) || o.includes(b));
       const valA = idxA === -1 ? 999 : idxA;
@@ -213,10 +311,26 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     });
 
     sortedCatNames.forEach(cat => {
-      sortedGroups[cat] = rawGroups[cat];
+      const catObj = rawCategories[cat];
+      if (catObj.isMeetCategory && catObj.proposalMap) {
+        // 発議事項を発議規定順にソート
+        const sortedPropMap: Record<string, Record<string, DocGroupItem>> = {};
+        const sortedProps = Object.keys(catObj.proposalMap).sort((pa, pb) => {
+          const idxA = PROPOSAL_ITEM_ORDER.findIndex(o => pa.includes(o) || o.includes(pa));
+          const idxB = PROPOSAL_ITEM_ORDER.findIndex(o => pb.includes(o) || o.includes(pb));
+          const valA = idxA === -1 ? 999 : idxA;
+          const valB = idxB === -1 ? 999 : idxB;
+          return valA - valB;
+        });
+        sortedProps.forEach(p => {
+          sortedPropMap[p] = catObj.proposalMap![p];
+        });
+        catObj.proposalMap = sortedPropMap;
+      }
+      sortedCategories[cat] = catObj;
     });
 
-    return sortedGroups;
+    return sortedCategories;
   }, [reports, drawings]);
 
   // 写真区分バッジのスタイルヘルパー
@@ -516,20 +630,62 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     const query = searchQuery.toLowerCase();
     const result: typeof docGroups = {};
 
-    Object.entries(docGroups).forEach(([catName, groupMap]) => {
-      const matchedGroups: typeof groupMap = {};
-      Object.entries(groupMap).forEach(([gTitle, data]) => {
-        const matchedItems = data.items.filter(item => 
-          item.title.toLowerCase().includes(query) || 
-          gTitle.toLowerCase().includes(query) ||
-          catName.toLowerCase().includes(query)
-        );
-        if (matchedItems.length > 0) {
-          matchedGroups[gTitle] = { type: data.type, items: matchedItems };
+    Object.entries(docGroups).forEach(([catName, catObj]) => {
+      if (catObj.isMeetCategory && catObj.proposalMap) {
+        const matchedPropMap: Record<string, Record<string, DocGroupItem>> = {};
+        let matchedCount = 0;
+
+        Object.entries(catObj.proposalMap).forEach(([propName, groupMap]) => {
+          const matchedGroupMap: Record<string, DocGroupItem> = {};
+          Object.entries(groupMap).forEach(([gTitle, data]) => {
+            const matchedItems = data.items.filter(item => 
+              item.title.toLowerCase().includes(query) || 
+              gTitle.toLowerCase().includes(query) ||
+              catName.toLowerCase().includes(query) ||
+              propName.toLowerCase().includes(query) ||
+              ('fileName' in item && item.fileName.toLowerCase().includes(query))
+            );
+            if (matchedItems.length > 0) {
+              matchedGroupMap[gTitle] = { ...data, items: matchedItems };
+              matchedCount += matchedItems.length;
+            }
+          });
+          if (Object.keys(matchedGroupMap).length > 0) {
+            matchedPropMap[propName] = matchedGroupMap;
+          }
+        });
+
+        if (Object.keys(matchedPropMap).length > 0) {
+          result[catName] = {
+            ...catObj,
+            totalCount: matchedCount,
+            proposalMap: matchedPropMap,
+          };
         }
-      });
-      if (Object.keys(matchedGroups).length > 0) {
-        result[catName] = matchedGroups;
+      } else if (catObj.directMap) {
+        const matchedGroupMap: Record<string, DocGroupItem> = {};
+        let matchedCount = 0;
+
+        Object.entries(catObj.directMap).forEach(([gTitle, data]) => {
+          const matchedItems = data.items.filter(item => 
+            item.title.toLowerCase().includes(query) || 
+            gTitle.toLowerCase().includes(query) ||
+            catName.toLowerCase().includes(query) ||
+            ('fileName' in item && item.fileName.toLowerCase().includes(query))
+          );
+          if (matchedItems.length > 0) {
+            matchedGroupMap[gTitle] = { ...data, items: matchedItems };
+            matchedCount += matchedItems.length;
+          }
+        });
+
+        if (Object.keys(matchedGroupMap).length > 0) {
+          result[catName] = {
+            ...catObj,
+            totalCount: matchedCount,
+            directMap: matchedGroupMap,
+          };
+        }
       }
     });
 
@@ -657,6 +813,227 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
     );
   }
 
+  // 各帳票エントリー (単独ファイルまたは 鑑+本文+添付+オリジナル原典フォルダ) のレンダリング
+  const renderDocGroupEntry = (catName: string, gTitle: string, data: DocGroupItem, propName?: string) => {
+    const subKey = propName ? `doc_sub_${catName}_${propName}_${gTitle}` : `doc_sub_${catName}_${gTitle}`;
+    const subOpen = isFolderOpen(subKey);
+    const items = data.items;
+    const isSingle = items.length === 1 && items[0].title === gTitle;
+    const propBadge = data.proposalItem ? getProposalBadge(data.proposalItem) : null;
+
+    // 単独ファイルの場合は階層を深くせず直接表示
+    if (isSingle) {
+      const item = items[0];
+      const isDrawing = data.type === 'drawing';
+      const isSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
+      const rec = inspectionRecords[item.id];
+
+      return (
+        <button
+          key={item.id}
+          onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+          className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
+            isSelected
+              ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
+              : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+          }`}
+        >
+          <div className="mt-0.5 shrink-0">
+            {rec?.status === 'ok' ? (
+              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+            ) : rec?.status === 'issue' ? (
+              <AlertCircle className="w-3 h-3 text-rose-400" />
+            ) : isDrawing ? (
+              <FolderGit2 className="w-3 h-3 text-slate-500" />
+            ) : (
+              <FileText className="w-3 h-3 text-slate-500" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1 truncate text-xs flex items-center gap-1.5">
+            {propBadge && (
+              <span className={`text-[10px] px-1 py-0.2 rounded border shrink-0 ${propBadge.cls}`}>
+                {propBadge.label}
+              </span>
+            )}
+            <span className="truncate">{item.title}</span>
+          </div>
+        </button>
+      );
+    }
+
+    const firstItem = items[0];
+    const subFiles = items.slice(1);
+    const pdfSubFiles = subFiles.filter(it => !('fileRole' in it && it.fileRole === 'オリジナル原典'));
+    const origFiles = subFiles.filter(it => 'fileRole' in it && it.fileRole === 'オリジナル原典');
+    const origKey = propName ? `doc_orig_${catName}_${propName}_${gTitle}` : `doc_orig_${catName}_${gTitle}`;
+    const origOpen = isFolderOpen(origKey);
+    const isDrawing = data.type === 'drawing';
+    const isFirstSelected = isDrawing ? firstItem.id === selectedDrawingId : firstItem.id === selectedReportId;
+    const isAnySelected = items.some(it => isDrawing ? it.id === selectedDrawingId : it.id === selectedReportId);
+    const recFirst = inspectionRecords[firstItem.id];
+
+    return (
+      <div key={gTitle} className="space-y-0.5">
+        {/* 帳票件名 ＝ 鑑・正本PDF (クリックで即時表示) */}
+        <div
+          className={`flex items-center justify-between p-1 rounded transition ${
+            isFirstSelected
+              ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
+              : isAnySelected
+              ? 'bg-slate-900/80 text-white'
+              : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+          }`}
+        >
+          <div
+            onClick={() => {
+              if (isDrawing) onSelectDrawing(firstItem.id);
+              else onSelectReport(firstItem.id);
+              if (subFiles.length > 0 && !subOpen) toggleFolder(subKey);
+            }}
+            className="flex items-center gap-1.5 truncate flex-1 min-w-0 cursor-pointer"
+          >
+            <div className="shrink-0">
+              {recFirst?.status === 'ok' ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              ) : recFirst?.status === 'issue' ? (
+                <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+              ) : isDrawing ? (
+                <FolderGit2 className="w-3.5 h-3.5 text-blue-400" />
+              ) : (
+                <FileText className="w-3.5 h-3.5 text-blue-400" />
+              )}
+            </div>
+            {propBadge && (
+              <span className={`text-[10px] px-1 py-0.2 rounded border shrink-0 ${propBadge.cls}`}>
+                {propBadge.label}
+              </span>
+            )}
+            <span className="text-xs truncate">{gTitle}</span>
+            {subFiles.length > 0 && (
+              <span className="text-[10px] bg-slate-800 text-slate-400 px-1 py-0.2 rounded shrink-0 flex items-center gap-1">
+                {pdfSubFiles.length > 0 && <span>+添付{pdfSubFiles.length}</span>}
+                {origFiles.length > 0 && <span className="text-indigo-400 font-medium">原典{origFiles.length}</span>}
+              </span>
+            )}
+          </div>
+
+          {/* 添付ファイルがある場合のみ開閉トグルボタンを表示 */}
+          {subFiles.length > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFolder(subKey);
+              }}
+              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded shrink-0 ml-1"
+              title={subOpen ? '添付ファイルを隠す' : '添付ファイルを表示'}
+            >
+              {subOpen ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
+            </button>
+          )}
+        </div>
+
+        {/* 本文・添付ファイル ＆ オリジナルファイルフォルダ */}
+        {subOpen && subFiles.length > 0 && (
+          <div className="ml-4 pl-2 border-l border-slate-800/80 space-y-0.5 mt-0.5">
+            {/* 1. 添付PDFや本文ファイル */}
+            {pdfSubFiles.map((item) => {
+              const isSubSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
+              const recSub = inspectionRecords[item.id];
+              const role = ('fileRole' in item && item.fileRole) ? item.fileRole : '本文';
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+                  className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
+                    isSubSelected
+                      ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
+                      : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="shrink-0">
+                    {recSub?.status === 'ok' ? (
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    ) : recSub?.status === 'issue' ? (
+                      <AlertCircle className="w-3 h-3 text-rose-400" />
+                    ) : (
+                      <FileText className="w-3 h-3 text-slate-500" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 truncate text-[11px]">
+                    <span className="font-semibold text-slate-300 mr-1">[{role}]</span>
+                    <span>{item.fileName}</span>
+                  </div>
+                </button>
+              );
+            })}
+
+            {/* 2. オリジナルファイル専用フォルダ */}
+            {origFiles.length > 0 && (
+              <div className="space-y-0.5 mt-1 pt-0.5">
+                <div
+                  onClick={() => toggleFolder(origKey)}
+                  className="flex items-center justify-between p-1 rounded hover:bg-slate-900 cursor-pointer text-slate-300 group transition text-[11px]"
+                >
+                  <div className="flex items-center gap-1.5 truncate">
+                    {origOpen ? (
+                      <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+                    )}
+                    <Folder className="w-3 h-3 text-indigo-400 shrink-0" />
+                    <span className="truncate group-hover:text-white font-medium">オリジナルファイル</span>
+                  </div>
+                  <span className="text-[10px] text-indigo-300 bg-indigo-950/60 border border-indigo-800/40 px-1 py-0.2 rounded shrink-0">
+                    {origFiles.length}
+                  </span>
+                </div>
+
+                {origOpen && (
+                  <div className="ml-3 pl-2 border-l border-indigo-900/40 space-y-0.5 mt-0.5">
+                    {origFiles.map((item) => {
+                      const isSubSelected = item.id === selectedReportId;
+                      const recSub = inspectionRecords[item.id];
+
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => onSelectReport(item.id)}
+                          className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
+                            isSubSelected
+                              ? 'bg-indigo-600/25 text-indigo-300 font-semibold border border-indigo-500/40'
+                              : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                          }`}
+                        >
+                          <div className="shrink-0">
+                            {recSub?.status === 'ok' ? (
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            ) : recSub?.status === 'issue' ? (
+                              <AlertCircle className="w-3 h-3 text-rose-400" />
+                            ) : (
+                              <FileSpreadsheet className="w-3 h-3 text-indigo-400/80" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1 truncate text-[11px]" title={('summary' in item && item.summary) ? item.summary : item.title}>
+                            <span className="text-slate-300">{item.title || item.fileName}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const totalDocsCount = reports.length + drawings.length;
   const totalPhotosCount = photos.length;
 
@@ -770,10 +1147,10 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
               <div className="p-4 text-center text-slate-500 text-xs">該当する書類がありません</div>
             ) : (
               <div className="space-y-1">
-              {Object.entries(filteredDocGroups).map(([catName, groupMap]) => {
+              {Object.entries(filteredDocGroups).map(([catName, catObj]) => {
                 const catKey = `doc_cat_${catName}`;
                 const catOpen = isFolderOpen(catKey);
-                const totalInCat = Object.values(groupMap).reduce((acc, g) => acc + g.items.length, 0);
+                const totalInCat = catObj.totalCount;
 
                 return (
                   <div key={catName} className="select-none">
@@ -796,215 +1173,66 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
                       </span>
                     </div>
 
-                    {/* 第2階層: 帳票件名 (9月度履行報告書, 施工計画書(当初) 等) */}
+                    {/* 第2階層: 打合せ簿の場合は発議事項別、その他の場合は直接帳票件名 */}
                     {catOpen && (
                       <div className="ml-3 pl-2 border-l border-slate-800 space-y-1 mt-0.5">
-                        {Object.entries(groupMap).map(([gTitle, data]) => {
-                          const subKey = `doc_sub_${catName}_${gTitle}`;
-                          const subOpen = isFolderOpen(subKey);
-                          const items = data.items;
-                          const isSingle = items.length === 1 && items[0].title === gTitle;
-
-                          // 単独ファイルの場合は階層を深くせず直接表示
-                          if (isSingle) {
-                            const item = items[0];
-                            const isDrawing = data.type === 'drawing';
-                            const isSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
-                            const rec = inspectionRecords[item.id];
+                        {catObj.isMeetCategory && catObj.proposalMap ? (
+                          Object.entries(catObj.proposalMap).map(([propName, groupMap]) => {
+                            const propKey = `doc_prop_${catName}_${propName}`;
+                            const propOpen = isFolderOpen(propKey);
+                            const totalInProp = Object.values(groupMap).reduce((acc, g) => acc + g.items.length, 0);
+                            const badge = getProposalBadge(propName);
 
                             return (
-                              <button
-                                key={item.id}
-                                onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
-                                className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
-                                  isSelected
-                                    ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
-                                    : 'text-slate-300 hover:bg-slate-900 hover:text-white'
-                                }`}
-                              >
-                                <div className="mt-0.5 shrink-0">
-                                  {rec?.status === 'ok' ? (
-                                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                  ) : rec?.status === 'issue' ? (
-                                    <AlertCircle className="w-3 h-3 text-rose-400" />
-                                  ) : isDrawing ? (
-                                    <FolderGit2 className="w-3 h-3 text-slate-500" />
-                                  ) : (
-                                    <FileText className="w-3 h-3 text-slate-500" />
-                                  )}
-                                </div>
-                                <div className="min-w-0 flex-1 truncate text-xs">{item.title}</div>
-                              </button>
-                            );
-                          }
-
-                          const firstItem = items[0];
-                          const subFiles = items.slice(1);
-                          const pdfSubFiles = subFiles.filter(it => !('fileRole' in it && it.fileRole === 'オリジナル原典'));
-                          const origFiles = subFiles.filter(it => 'fileRole' in it && it.fileRole === 'オリジナル原典');
-                          const origKey = `doc_orig_${catName}_${gTitle}`;
-                          const origOpen = isFolderOpen(origKey);
-                          const isDrawing = data.type === 'drawing';
-                          const isFirstSelected = isDrawing ? firstItem.id === selectedDrawingId : firstItem.id === selectedReportId;
-                          const isAnySelected = items.some(it => isDrawing ? it.id === selectedDrawingId : it.id === selectedReportId);
-                          const recFirst = inspectionRecords[firstItem.id];
-
-                          return (
-                            <div key={gTitle} className="space-y-0.5">
-                              {/* 第2階層: 帳票件名 ＝ 鑑・正本PDF (クリックで即時表示) */}
-                              <div
-                                className={`flex items-center justify-between p-1 rounded transition ${
-                                  isFirstSelected
-                                    ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
-                                    : isAnySelected
-                                    ? 'bg-slate-900/80 text-white'
-                                    : 'text-slate-300 hover:bg-slate-900 hover:text-white'
-                                }`}
-                              >
+                              <div key={propName} className="space-y-0.5">
+                                {/* 発議事項サブフォルダ (協議, 承諾, 指示, 提出, 報告 等) */}
                                 <div
-                                  onClick={() => {
-                                    if (isDrawing) onSelectDrawing(firstItem.id);
-                                    else onSelectReport(firstItem.id);
-                                    if (subFiles.length > 0 && !subOpen) toggleFolder(subKey);
-                                  }}
-                                  className="flex items-center gap-1.5 truncate flex-1 min-w-0 cursor-pointer"
+                                  onClick={() => toggleFolder(propKey)}
+                                  className="flex items-center justify-between p-1 rounded hover:bg-slate-900 cursor-pointer text-slate-200 group transition"
                                 >
-                                  <div className="shrink-0">
-                                    {recFirst?.status === 'ok' ? (
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                                    ) : recFirst?.status === 'issue' ? (
-                                      <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                                    ) : isDrawing ? (
-                                      <FolderGit2 className="w-3.5 h-3.5 text-blue-400" />
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    {propOpen ? (
+                                      <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                                     ) : (
-                                      <FileText className="w-3.5 h-3.5 text-blue-400" />
+                                      <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                    )}
+                                    <Folder className={`w-3.5 h-3.5 shrink-0 ${
+                                      /協議/.test(propName) ? 'text-blue-400' :
+                                      /指示/.test(propName) ? 'text-purple-400' :
+                                      /承諾/.test(propName) ? 'text-emerald-400' :
+                                      /提出/.test(propName) ? 'text-amber-400' :
+                                      /報告/.test(propName) ? 'text-cyan-400' :
+                                      /立会|確認/.test(propName) ? 'text-rose-400' : 'text-slate-400'
+                                    }`} />
+                                    {badge ? (
+                                      <span className={`text-[10px] px-1.5 py-0.2 rounded border font-semibold ${badge.cls}`}>
+                                        {propName}
+                                      </span>
+                                    ) : (
+                                      <span className="truncate group-hover:text-white font-medium text-xs">{propName}</span>
                                     )}
                                   </div>
-                                  <span className="text-xs truncate">{gTitle}</span>
-                                  {subFiles.length > 0 && (
-                                    <span className="text-[10px] bg-slate-800 text-slate-400 px-1 py-0.2 rounded shrink-0 flex items-center gap-1">
-                                      {pdfSubFiles.length > 0 && <span>+添付{pdfSubFiles.length}</span>}
-                                      {origFiles.length > 0 && <span className="text-indigo-400 font-medium">原典{origFiles.length}</span>}
-                                    </span>
-                                  )}
+                                  <span className="text-[10px] text-slate-400 bg-slate-800/80 px-1.5 py-0.2 rounded-full shrink-0">
+                                    {totalInProp}
+                                  </span>
                                 </div>
 
-                                {/* 添付ファイルがある場合のみ開閉トグルボタンを表示 */}
-                                {subFiles.length > 0 && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleFolder(subKey);
-                                    }}
-                                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded shrink-0 ml-1"
-                                    title={subOpen ? '添付ファイルを隠す' : '添付ファイルを表示'}
-                                  >
-                                    {subOpen ? (
-                                      <ChevronDown className="w-3.5 h-3.5" />
-                                    ) : (
-                                      <ChevronRight className="w-3.5 h-3.5" />
+                                {/* 発議事項配下の各打合せ簿 */}
+                                {propOpen && (
+                                  <div className="ml-3 pl-2 border-l border-slate-800/80 space-y-1 mt-0.5">
+                                    {Object.entries(groupMap).map(([gTitle, data]) =>
+                                      renderDocGroupEntry(catName, gTitle, data, propName)
                                     )}
-                                  </button>
+                                  </div>
                                 )}
                               </div>
-
-                              {/* 第3階層: 本文・添付ファイル ＆ オリジナルファイルフォルダ */}
-                              {subOpen && subFiles.length > 0 && (
-                                <div className="ml-4 pl-2 border-l border-slate-800/80 space-y-0.5 mt-0.5">
-                                  {/* 1. 添付PDFや本文ファイル */}
-                                  {pdfSubFiles.map((item) => {
-                                    const isSubSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
-                                    const recSub = inspectionRecords[item.id];
-                                    const role = ('fileRole' in item && item.fileRole) ? item.fileRole : '本文';
-
-                                    return (
-                                      <button
-                                        key={item.id}
-                                        onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
-                                        className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
-                                          isSubSelected
-                                            ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
-                                            : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
-                                        }`}
-                                      >
-                                        <div className="shrink-0">
-                                          {recSub?.status === 'ok' ? (
-                                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                          ) : recSub?.status === 'issue' ? (
-                                            <AlertCircle className="w-3 h-3 text-rose-400" />
-                                          ) : (
-                                            <FileText className="w-3 h-3 text-slate-500" />
-                                          )}
-                                        </div>
-                                        <div className="min-w-0 flex-1 truncate text-[11px]">
-                                          <span className="font-semibold text-slate-300 mr-1">[{role}]</span>
-                                          <span>{item.fileName}</span>
-                                        </div>
-                                      </button>
-                                    );
-                                  })}
-
-                                  {/* 2. オリジナルファイル専用フォルダ */}
-                                  {origFiles.length > 0 && (
-                                    <div className="space-y-0.5 mt-1 pt-0.5">
-                                      <div
-                                        onClick={() => toggleFolder(origKey)}
-                                        className="flex items-center justify-between p-1 rounded hover:bg-slate-900 cursor-pointer text-slate-300 group transition text-[11px]"
-                                      >
-                                        <div className="flex items-center gap-1.5 truncate">
-                                          {origOpen ? (
-                                            <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
-                                          ) : (
-                                            <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
-                                          )}
-                                          <Folder className="w-3 h-3 text-indigo-400 shrink-0" />
-                                          <span className="truncate group-hover:text-white font-medium">オリジナルファイル</span>
-                                        </div>
-                                        <span className="text-[10px] text-indigo-300 bg-indigo-950/60 border border-indigo-800/40 px-1 py-0.2 rounded shrink-0">
-                                          {origFiles.length}
-                                        </span>
-                                      </div>
-
-                                      {origOpen && (
-                                        <div className="ml-3 pl-2 border-l border-indigo-900/40 space-y-0.5 mt-0.5">
-                                          {origFiles.map((item) => {
-                                            const isSubSelected = item.id === selectedReportId;
-                                            const recSub = inspectionRecords[item.id];
-
-                                            return (
-                                              <button
-                                                key={item.id}
-                                                onClick={() => onSelectReport(item.id)}
-                                                className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
-                                                  isSubSelected
-                                                    ? 'bg-indigo-600/25 text-indigo-300 font-semibold border border-indigo-500/40'
-                                                    : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
-                                                }`}
-                                              >
-                                                <div className="shrink-0">
-                                                  {recSub?.status === 'ok' ? (
-                                                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                                  ) : recSub?.status === 'issue' ? (
-                                                    <AlertCircle className="w-3 h-3 text-rose-400" />
-                                                  ) : (
-                                                    <FileSpreadsheet className="w-3 h-3 text-indigo-400/80" />
-                                                  )}
-                                                </div>
-                                                <div className="min-w-0 flex-1 truncate text-[11px]" title={('summary' in item && item.summary) ? item.summary : item.title}>
-                                                  <span className="text-slate-300">{item.title || item.fileName}</span>
-                                                </div>
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                            );
+                          })
+                        ) : (
+                          Object.entries(catObj.directMap || {}).map(([gTitle, data]) =>
+                            renderDocGroupEntry(catName, gTitle, data)
+                          )
+                        )}
                       </div>
                     )}
                   </div>
