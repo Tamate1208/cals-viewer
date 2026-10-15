@@ -63,10 +63,10 @@ const PROPOSAL_ITEM_ORDER = [
   '承諾',
   '提出',
   '報告',
+  '通知',
   '連絡',
   '立会',
   '確認',
-  '協議・その他',
   'その他'
 ];
 
@@ -229,39 +229,56 @@ export const InspectionTreeNav: React.FC<InspectionTreeNavProps> = ({
 
     const rawCategories: Record<string, DocCategoryContainer> = {};
 
+    interface CatTempItem {
+      item: ReportItem;
+      groupName: string;
+      kind: string;
+    }
+    const tempBuckets: Record<string, CatTempItem[]> = {};
+
     sortedReports.forEach(r => {
-      // 打合せ簿判定: r.typeが打合せ簿、またはタイトルに打合せ簿が含まれる場合
-      const isMeet = Boolean((r.type && r.type.includes('打合せ')) || (r.title && r.title.includes('打合せ簿')));
-      const typeName = isMeet ? '打合せ簿' : (r.type || '一般書類');
+      // 大項目: <工事帳票種類> (未設定時は '打合せ簿')
+      const typeName = r.type || '打合せ簿';
       const groupName = r.groupTitle || r.title || '書類';
-      const proposal = r.proposalItem || '協議・その他';
+      const kind = r.proposalItem || '';
 
-      if (!rawCategories[typeName]) {
-        rawCategories[typeName] = {
-          totalCount: 0,
-          isMeetCategory: isMeet,
-          proposalMap: isMeet ? {} : undefined,
-          directMap: isMeet ? undefined : {},
-        };
+      if (!tempBuckets[typeName]) {
+        tempBuckets[typeName] = [];
       }
+      tempBuckets[typeName].push({ item: r, groupName, kind });
+    });
 
-      const catObj = rawCategories[typeName];
-      catObj.totalCount += 1;
+    Object.entries(tempBuckets).forEach(([typeName, bucketItems]) => {
+      const uniqueKinds = Array.from(new Set(bucketItems.map(b => b.kind).filter(Boolean)));
+      // 打合せ簿、または種類が複数存在する場合にのみ <打合せ簿種類> サブフォルダを作成
+      const shouldGroupKinds = (typeName.includes('打合せ') && uniqueKinds.length > 0) || uniqueKinds.length >= 2;
 
-      if (catObj.isMeetCategory && catObj.proposalMap) {
-        if (!catObj.proposalMap[proposal]) {
-          catObj.proposalMap[proposal] = {};
+      const catObj: DocCategoryContainer = {
+        totalCount: bucketItems.length,
+        isMeetCategory: shouldGroupKinds,
+        proposalMap: shouldGroupKinds ? {} : undefined,
+        directMap: shouldGroupKinds ? undefined : {},
+      };
+
+      bucketItems.forEach(({ item, groupName, kind }) => {
+        if (shouldGroupKinds && catObj.proposalMap) {
+          const propKey = kind || 'その他';
+          if (!catObj.proposalMap[propKey]) {
+            catObj.proposalMap[propKey] = {};
+          }
+          if (!catObj.proposalMap[propKey][groupName]) {
+            catObj.proposalMap[propKey][groupName] = { type: 'report', items: [], proposalItem: kind || undefined };
+          }
+          catObj.proposalMap[propKey][groupName].items.push(item);
+        } else if (catObj.directMap) {
+          if (!catObj.directMap[groupName]) {
+            catObj.directMap[groupName] = { type: 'report', items: [], proposalItem: kind || undefined };
+          }
+          catObj.directMap[groupName].items.push(item);
         }
-        if (!catObj.proposalMap[proposal][groupName]) {
-          catObj.proposalMap[proposal][groupName] = { type: 'report', items: [], proposalItem: proposal };
-        }
-        catObj.proposalMap[proposal][groupName].items.push(r);
-      } else if (catObj.directMap) {
-        if (!catObj.directMap[groupName]) {
-          catObj.directMap[groupName] = { type: 'report', items: [] };
-        }
-        catObj.directMap[groupName].items.push(r);
-      }
+      });
+
+      rawCategories[typeName] = catObj;
     });
 
     if (drawings.length > 0) {

@@ -620,31 +620,45 @@ export function parseReportXml(xmlString: string): ReportItem[] {
   meetNodes.forEach((node, mIndex) => {
     const serial = getElementText(node, 'シリアル番号', 'serial_number');
     const meetName = getElementText(node, '打合せ簿名称', '名称', 'name', 'title') || `打合せ簿 ${mIndex + 1}`;
-    const meetClass = getElementText(node, '工事帳票種類', '打合せ簿種類', '帳票種類', 'type') || '打合せ簿';
-    const rawProposal = getElementText(node, '発議事項', '発議事項区分', '発議区分', '発議事項区分名称', '発議項目');
+    // 大項目: <工事帳票種類> (例: '打合せ簿', '施工計画書', '確認書' 等。未設定時は '打合せ簿')
+    const docCategory = getElementText(node, '工事帳票種類', '帳票種類') || '打合せ簿';
+    // 中分類: <打合せ簿種類> (例: '協議', '承諾', '指示', '提出', '報告', '立会', '確認' 等)
+    const rawKind = getElementText(node, '打合せ簿種類', '発議事項', '発議事項区分', '発議区分', '発議事項区分名称', '発議項目');
     const rawDate = getElementText(node, '発行日付', '受理日付', '作成日', 'date');
     const date = normalizeCalsDate(rawDate);
 
-    // 発議事項の推定・正規化 (協議, 承諾, 指示, 提出, 報告, 連絡, 立会, 確認 等)
-    const inferProposal = (raw: string, name: string, cls: string): string => {
-      const combined = `${raw} ${cls} ${name}`.trim();
-      if (/指示/.test(combined)) return '指示';
-      if (/承諾|承認|認可/.test(combined)) return '承諾';
-      if (/協議/.test(combined)) return '協議';
-      if (/提出|届出|申請|願/.test(combined)) return '提出';
-      if (/報告|週報|月報/.test(combined)) return '報告';
-      if (/連絡|通知/.test(combined)) return '連絡';
-      if (/立会/.test(combined)) return '立会';
-      if (/確認|検測/.test(combined)) return '確認';
-      if (/^1$|^01$/.test(raw)) return '指示';
-      if (/^2$|^02$/.test(raw)) return '承諾';
-      if (/^3$|^03$/.test(raw)) return '協議';
-      if (/^4$|^04$/.test(raw)) return '提出';
-      if (/^5$|^05$/.test(raw)) return '報告';
-      if (/^6$|^06$/.test(raw)) return '連絡';
-      return raw || '協議・その他';
+    // 打合せ簿種類の正規化 (協議, 承諾, 指示, 提出, 報告, 連絡, 立会, 確認 等)
+    const inferKind = (raw: string, name: string): string => {
+      const cleanRaw = raw.trim();
+      if (cleanRaw) {
+        if (/^1$|^01$/.test(cleanRaw)) return '指示';
+        if (/^2$|^02$/.test(cleanRaw)) return '承諾';
+        if (/^3$|^03$/.test(cleanRaw)) return '協議';
+        if (/^4$|^04$/.test(cleanRaw)) return '提出';
+        if (/^5$|^05$/.test(cleanRaw)) return '報告';
+        if (/^6$|^06$/.test(cleanRaw)) return '連絡';
+        if (/指示/.test(cleanRaw)) return '指示';
+        if (/承諾|承認|認可/.test(cleanRaw)) return '承諾';
+        if (/協議/.test(cleanRaw)) return '協議';
+        if (/提出|届出|申請|願/.test(cleanRaw)) return '提出';
+        if (/報告|週報|月報/.test(cleanRaw)) return '報告';
+        if (/連絡|通知/.test(cleanRaw)) return '連絡';
+        if (/立会/.test(cleanRaw)) return '立会';
+        if (/確認|検測/.test(cleanRaw)) return '確認';
+        return cleanRaw;
+      }
+      // タグ未設定時のみ件名から推測
+      if (/指示/.test(name)) return '指示';
+      if (/承諾|承認|認可/.test(name)) return '承諾';
+      if (/協議/.test(name)) return '協議';
+      if (/提出|届出|申請|願/.test(name)) return '提出';
+      if (/報告|週報|月報/.test(name)) return '報告';
+      if (/連絡|通知/.test(name)) return '連絡';
+      if (/立会/.test(name)) return '立会';
+      if (/確認|検測/.test(name)) return '確認';
+      return '';
     };
-    const proposal = inferProposal(rawProposal, meetName, meetClass);
+    const meetKind = inferKind(rawKind, meetName);
 
     // <オリジナルファイル情報> が複数ある場合がある
     const fileInfos = findDescendantElements(node, 'オリジナルファイル情報');
@@ -658,34 +672,36 @@ export function parseReportXml(xmlString: string): ReportItem[] {
           const isKagami = /鏡|かがみ/i.test(fileContent) || (fIdx === 0 && !fileContent);
           const role = isKagami ? '鑑' : (fileContent || fileJpName || `本文 ${fIdx + 1}`);
           const detailSuffix = ` (${role})`;
+          const kindSuffix = meetKind ? ` [${meetKind}]` : '';
           items.push({
             id: `MEET_${serial || mIndex + 1}_${fIdx + 1}`,
             title: `${meetName}${detailSuffix}`,
-            type: '打合せ簿',
+            type: docCategory,
             fileName,
             filePath: fileName,
             createDate: date,
-            summary: `打合せ簿 [${proposal}] / ${meetName} ${detailSuffix}`,
+            summary: `${docCategory}${kindSuffix} / ${meetName} ${detailSuffix}`,
             groupTitle: meetName,
             fileRole: role,
-            proposalItem: proposal,
+            proposalItem: meetKind || undefined,
           });
         }
       });
     } else {
       const fileName = getElementText(node, '打合せ簿オリジナルファイル名', 'オリジナルファイル名', 'file_name', 'filename');
       if (fileName) {
+        const kindSuffix = meetKind ? ` [${meetKind}]` : '';
         items.push({
           id: `MEET_${serial || mIndex + 1}`,
           title: meetName,
-          type: '打合せ簿',
+          type: docCategory,
           fileName,
           filePath: fileName,
           createDate: date,
-          summary: `打合せ簿 [${proposal}] / ${meetName}`,
+          summary: `${docCategory}${kindSuffix} / ${meetName}`,
           groupTitle: meetName,
           fileRole: '鑑・本文',
-          proposalItem: proposal,
+          proposalItem: meetKind || undefined,
         });
       }
     }
