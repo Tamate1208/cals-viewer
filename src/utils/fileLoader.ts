@@ -272,7 +272,7 @@ export interface DroppedFileEntry {
 
 /**
  * DataTransferItemList または同期抽出済みエントリ配列 (ドラッグ＆ドロップ) から再帰的に全ファイルを走査・収集
- * 大量ファイル対応: dirReader.readEntries は一度に最大100件までしか返さないため、空になるまでループ走査
+ * Chrome推奨の FileSystem Access API (getAsFileSystemHandle) と Safari等の webkitGetAsEntry に両対応
  */
 export async function scanDroppedDirectory(
   source: DataTransferItemList | any[],
@@ -281,29 +281,80 @@ export async function scanDroppedDirectory(
   const result: DroppedFileEntry[] = [];
   let scannedCount = 0;
 
-  // もし DataTransferItemList であれば即座に同期抽出
-  const rawEntries: any[] = [];
-  if (Array.isArray(source)) {
-    rawEntries.push(...source);
-  } else if (source && typeof (source as any).length === 'number') {
+  const notifyCount = () => {
+    scannedCount++;
+    if (scannedCount % 50 === 0) {
+      onProgress?.(`フォルダ内を走査中... (${scannedCount} 件検出)`);
+    }
+  };
+
+  // 1. DataTransferItemList の場合、同期的に handles または webkitEntries を即時抽出
+  const handles: any[] = [];
+  const webkitEntries: any[] = [];
+
+  if (source && typeof (source as any).length === 'number') {
     for (let i = 0; i < (source as any).length; i++) {
       const item = (source as any)[i];
-      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : (item as any).getAsEntry?.();
-      if (entry) rawEntries.push(entry);
+      // FileSystem Access API (Chrome 86+)
+      if (typeof item.getAsFileSystemHandle === 'function') {
+        try {
+          const handlePromise = item.getAsFileSystemHandle();
+          if (handlePromise) handles.push(handlePromise);
+        } catch {
+          // ignore
+        }
+      }
+      // webkitGetAsEntry (Safari, Firefox, Chrome fallback)
+      if (typeof item.webkitGetAsEntry === 'function') {
+        const entry = item.webkitGetAsEntry();
+        if (entry) webkitEntries.push(entry);
+      } else if (item.isFile || item.isDirectory) {
+        webkitEntries.push(item);
+      }
     }
   }
 
-  // FileSystemEntry 型のヘルパー走査関数
-  const scanEntry = async (entry: any, currentPath: string): Promise<void> => {
+  // 2. Chrome等で FileSystemHandle が取得できた場合は優先して再帰走査
+  if (handles.length > 0) {
+    try {
+      const resolvedHandles = (await Promise.all(handles)).filter(Boolean);
+      if (resolvedHandles.length > 0) {
+        const scanHandle = async (handle: any, currentPath: string): Promise<void> => {
+          if (!handle) return;
+          if (handle.kind === 'file') {
+            const file = await handle.getFile();
+            notifyCount();
+            result.push({
+              file,
+              relativePath: currentPath ? `${currentPath}/${file.name}` : file.name,
+            });
+          } else if (handle.kind === 'directory') {
+            const nextPath = currentPath ? `${currentPath}/${handle.name}` : handle.name;
+            // @ts-ignore
+            for await (const child of handle.values()) {
+              await scanHandle(child, nextPath);
+            }
+          }
+        };
+
+        await Promise.all(resolvedHandles.map(h => scanHandle(h, '')));
+        if (result.length > 0) {
+          return result;
+        }
+      }
+    } catch (e) {
+      console.warn('FileSystemHandle scan failed, falling back to webkitEntries:', e);
+    }
+  }
+
+  // 3. webkitGetAsEntry (Safari または FileSystemHandle未サポート環境) での走査
+  const scanWebkitEntry = async (entry: any, currentPath: string): Promise<void> => {
     if (!entry) return;
 
     if (entry.isFile) {
       await new Promise<void>((resolve) => {
         entry.file((file: File) => {
-          scannedCount++;
-          if (scannedCount % 50 === 0) {
-            onProgress?.(`フォルダ内を走査中... (${scannedCount} 件検出)`);
-          }
+          notifyCount();
           result.push({
             file,
             relativePath: currentPath ? `${currentPath}/${file.name}` : file.name,
@@ -318,7 +369,6 @@ export async function scanDroppedDirectory(
       const dirReader = entry.createReader();
       const nextPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
 
-      // readEntries は最大100件ずつのバッチで返るため、空になるまで繰り返し読み込む
       const readAllEntries = async (): Promise<any[]> => {
         const allEntries: any[] = [];
         while (true) {
@@ -336,17 +386,12 @@ export async function scanDroppedDirectory(
 
       const entries = await readAllEntries();
       for (const child of entries) {
-        await scanEntry(child, nextPath);
+        await scanWebkitEntry(child, nextPath);
       }
     }
   };
 
-  const tasks: Promise<void>[] = [];
-  for (const entry of rawEntries) {
-    tasks.push(scanEntry(entry, ''));
-  }
-
-  await Promise.all(tasks);
+  await Promise.all(webkitEntries.map(e => scanWebkitEntry(e, '')));
   return result;
 }
 

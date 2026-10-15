@@ -83,48 +83,48 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     e.stopPropagation();
     setIsDragOver(false);
 
-    // 1. 重要: await を挟む前に、同期的に即座に entries と files を抽出する（ブラウザ破棄対策）
-    const rawEntries: any[] = [];
-    if (e.dataTransfer.items) {
-      for (let i = 0; i < e.dataTransfer.items.length; i++) {
-        const item = e.dataTransfer.items[i];
-        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : (item as any).getAsEntry?.();
-        if (entry) rawEntries.push(entry);
-      }
-    }
     const files = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
-    if (rawEntries.length === 0 && files.length === 0) return;
+
+    // ZIPファイルが直接ドロップされた場合
+    if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+      try {
+        setIsLoading(true);
+        setErrorMessage(null);
+        setProgressMessage('ZIPアーカイブを展開中...');
+        const dataset = await loadFromZip(files[0], (msg) => setProgressMessage(msg));
+        onDatasetLoaded(dataset);
+      } catch (err: unknown) {
+        console.error(err);
+        const msg = err instanceof Error ? err.message : '不明なエラー';
+        setErrorMessage(`ZIP展開・読み込み中にエラーが発生しました: ${msg}`);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // フォルダまたは複数ファイル
+    // ★重要: Chrome では非同期待機（await）を挟むと items のアクセス権が失効するため、
+    // 即座に DataTransferItemList を scanDroppedDirectory に渡して同期的に走査を開始する！
+    const items = e.dataTransfer.items;
+    if ((!items || items.length === 0) && files.length === 0) return;
 
     try {
       setIsLoading(true);
       setErrorMessage(null);
-
-      // ZIPファイルがドロップされた場合
-      if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
-        setProgressMessage('ZIPアーカイブを展開中...');
-        await new Promise(r => setTimeout(r, 80));
-        const dataset = await loadFromZip(files[0], (msg) => setProgressMessage(msg));
-        onDatasetLoaded(dataset);
-        return;
-      }
-
-      // フォルダまたは複数ファイル
-      setProgressMessage('ドロップされたファイルを走査中...');
-      await new Promise(r => setTimeout(r, 60));
+      setProgressMessage('ドロップされたフォルダを走査中...');
 
       let entries: DroppedFileEntry[] = [];
-      if (rawEntries.length > 0) {
-        entries = await scanDroppedDirectory(rawEntries, (msg) => setProgressMessage(msg));
+      if (items && items.length > 0) {
+        entries = await scanDroppedDirectory(items, (msg) => setProgressMessage(msg));
       }
 
       if (entries.length > 0) {
         setProgressMessage(`全 ${entries.length} 件のファイルを検出しました。解析を開始します...`);
-        await new Promise(r => setTimeout(r, 80));
         const dataset = await loadFromDirectory(entries, (msg) => setProgressMessage(msg));
         onDatasetLoaded(dataset);
       } else if (files.length > 0) {
         setProgressMessage(`全 ${files.length} 件のファイルを検出しました。解析を開始します...`);
-        await new Promise(r => setTimeout(r, 80));
         const dataset = await loadFromDirectory(files as unknown as FileList, (msg) => setProgressMessage(msg));
         onDatasetLoaded(dataset);
       } else {
@@ -152,7 +152,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
   return (
     <div 
-      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+      onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; }}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setIsDragOver(true); }}
       onDragLeave={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node)) {
           setIsDragOver(false);
@@ -228,7 +229,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
         {/* ドロップゾーン */}
         <div
-          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+          onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; }}
+          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setIsDragOver(true); }}
           onDragLeave={() => setIsDragOver(false)}
           onDrop={handleDrop}
           className={`w-full p-8 sm:p-12 border-2 border-dashed rounded-2xl transition flex flex-col items-center justify-center text-center backdrop-blur-sm ${
