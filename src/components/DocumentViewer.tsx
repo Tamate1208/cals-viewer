@@ -24,7 +24,7 @@ interface DocumentViewerProps {
   onUpdateInspection: (record: InspectionRecord) => void;
 }
 
-export const DocumentViewer: React.FC<DocumentViewerProps> = ({
+const DocumentViewerComponent: React.FC<DocumentViewerProps> = ({
   constructionInfo,
   reports,
   drawings,
@@ -272,3 +272,5 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     </div>
   );
 };
+
+export const DocumentViewer = React.memo(DocumentViewerComponent);

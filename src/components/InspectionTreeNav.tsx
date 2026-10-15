@@ -170,12 +170,15 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
-    let currentWidth = treeWidth;
+    const startX = e.clientX;
+    const startWidth = treeRef.current ? treeRef.current.getBoundingClientRect().width : treeWidth;
+    let currentWidth = startWidth;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingRef.current) return;
-      const maxAllowed = Math.min(window.innerWidth * 0.6, 700);
-      const newWidth = Math.max(220, Math.min(moveEvent.clientX, maxAllowed));
+      const deltaX = moveEvent.clientX - startX;
+      const maxAllowed = Math.min(window.innerWidth * 0.75, 850);
+      const newWidth = Math.max(220, Math.min(startWidth + deltaX, maxAllowed));
       currentWidth = newWidth;
       if (treeRef.current) {
         treeRef.current.style.width = `${newWidth}px`;
@@ -188,8 +191,8 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
       setIsResizing(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove, true);
+      window.removeEventListener('mouseup', handleMouseUp, true);
       setTreeWidth(currentWidth);
       try {
         localStorage.setItem('cals_tree_nav_width', String(currentWidth));
@@ -198,8 +201,8 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
       }
     };
 
-    window.addEventListener('mousemove', handleMouseMove, { passive: true });
-    window.addEventListener('mouseup', handleMouseUp, { once: true });
+    window.addEventListener('mousemove', handleMouseMove, true);
+    window.addEventListener('mouseup', handleMouseUp, true);
   };
 
   // 幅リセットハンドラ（ダブルクリックで288pxに戻す）
@@ -1146,6 +1149,11 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
           isResizing ? 'bg-blue-400' : 'bg-slate-700/60 hover:bg-blue-400'
         }`} />
       </div>
+
+      {/* リサイズドラッグ中にiframeへのマウスイベント吸い込みを完全防止する透明全画面ガード */}
+      {isResizing && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none bg-transparent" />
+      )}
       {/* ツリーヘッダー */}
       <div className="p-2.5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900/40">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
