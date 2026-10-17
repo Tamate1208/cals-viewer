@@ -129,6 +129,114 @@ function createMockDocDataUrl(docTitle: string, docNumber: string, contentLines:
 }
 
 /**
+ * 簡易的なP21 (ISO 10303-21) CAD図面データURLを生成
+ */
+function createMockP21DataUrl(): string {
+  const p21 = `ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('SXF CAD DRAWING'),'2;1');
+FILE_NAME('D0001003.P21','2026-10-17T00:00:00',('JACIC'),('CALS'),'','','');
+FILE_SCHEMA(('SXF_LEVEL2'));
+ENDSEC;
+DATA;
+/* 図面外枠 A1 (841 x 594 mm) */
+#1=CARTESIAN_POINT('',(0.0,0.0));
+#2=CARTESIAN_POINT('',(841.0,0.0));
+#3=CARTESIAN_POINT('',(841.0,594.0));
+#4=CARTESIAN_POINT('',(0.0,594.0));
+#5=LINE('',#1,#2);
+#6=LINE('',#2,#3);
+#7=LINE('',#3,#4);
+#8=LINE('',#4,#1);
+
+/* 図面内枠 (マージン 10mm) */
+#10=CARTESIAN_POINT('',(10.0,10.0));
+#11=CARTESIAN_POINT('',(831.0,10.0));
+#12=CARTESIAN_POINT('',(831.0,584.0));
+#13=CARTESIAN_POINT('',(10.0,584.0));
+#14=LINE('',#10,#11);
+#15=LINE('',#11,#12);
+#16=LINE('',#12,#13);
+#17=LINE('',#13,#10);
+
+/* 表題欄 */
+#20=CARTESIAN_POINT('',(531.0,10.0));
+#21=CARTESIAN_POINT('',(531.0,90.0));
+#22=CARTESIAN_POINT('',(831.0,90.0));
+#23=LINE('',#20,#21);
+#24=LINE('',#21,#22);
+
+/* 図面タイトル */
+#30=CARTESIAN_POINT('',(545.0,65.0));
+#31=TEXT_LITERAL('','標準横断図・土工定規図 (CAD完成図)',#30,8.0);
+#32=CARTESIAN_POINT('',(545.0,40.0));
+#33=TEXT_LITERAL('','工事名: 一般国道487号 道路改良工事',#32,5.0);
+#34=CARTESIAN_POINT('',(545.0,22.0));
+#35=TEXT_LITERAL('','縮尺: 1:50 / 形式: ISO 10303-21 (SXF)',#34,4.5);
+
+/* 道路横断勾配・車道ライン (中央分離、歩道、擁壁) */
+#100=CARTESIAN_POINT('',(120.0,280.0));
+#101=CARTESIAN_POINT('',(220.0,280.0));
+#102=CARTESIAN_POINT('',(420.0,290.0));
+#103=CARTESIAN_POINT('',(620.0,280.0));
+#104=CARTESIAN_POINT('',(720.0,280.0));
+#105=LINE('',#100,#101);
+#106=LINE('',#101,#102);
+#107=LINE('',#102,#103);
+#108=LINE('',#103,#104);
+
+/* 車道センターライン */
+#110=CARTESIAN_POINT('',(420.0,200.0));
+#111=CARTESIAN_POINT('',(420.0,400.0));
+#112=LINE('',#110,#111);
+#113=CARTESIAN_POINT('',(425.0,405.0));
+#114=TEXT_LITERAL('','道路中心線 (CL)',#113,5.0);
+
+/* 擁壁・U型側溝の断面形状 */
+#120=CARTESIAN_POINT('',(120.0,280.0));
+#121=CARTESIAN_POINT('',(120.0,160.0));
+#122=CARTESIAN_POINT('',(70.0,140.0));
+#123=CARTESIAN_POINT('',(70.0,200.0));
+#124=LINE('',#120,#121);
+#125=LINE('',#121,#122);
+#126=LINE('',#122,#123);
+#127=LINE('',#123,#120);
+
+/* 寸法線・矢印 */
+#130=CARTESIAN_POINT('',(220.0,330.0));
+#131=CARTESIAN_POINT('',(420.0,330.0));
+#132=LINE('',#130,#131);
+#133=CARTESIAN_POINT('',(300.0,335.0));
+#134=TEXT_LITERAL('','車道 W=3.25m (2.0%)',#133,5.0);
+
+#140=CARTESIAN_POINT('',(420.0,330.0));
+#141=CARTESIAN_POINT('',(620.0,330.0));
+#142=LINE('',#140,#141);
+#143=CARTESIAN_POINT('',(500.0,335.0));
+#144=TEXT_LITERAL('','車道 W=3.25m (-2.0%)',#143,5.0);
+
+#150=CARTESIAN_POINT('',(120.0,350.0));
+#151=CARTESIAN_POINT('',(220.0,350.0));
+#152=LINE('',#150,#151);
+#153=CARTESIAN_POINT('',(140.0,355.0));
+#154=TEXT_LITERAL('','歩道 W=2.0m',#153,5.0);
+
+/* 円形構造物 (水抜きパイプ) */
+#160=CARTESIAN_POINT('',(95.0,210.0));
+#161=CIRCLE('',#160,8.0);
+#162=CARTESIAN_POINT('',(95.0,175.0));
+#163=CIRCLE('',#162,8.0);
+#164=CARTESIAN_POINT('',(110.0,190.0));
+#165=TEXT_LITERAL('','VPφ75 水抜き管',#164,4.0);
+
+ENDSEC;
+END-ISO-10303-21;
+`.trim();
+
+  return `data:text/plain;charset=utf-8,${encodeURIComponent(p21)}`;
+}
+
+/**
  * GioV 公共工事の模擬電子納品データセット
  */
 export function getSampleHiroshimaDataset(): DeliveryDataset {
@@ -438,6 +546,16 @@ export function getSampleHiroshimaDataset(): DeliveryDataset {
             '水抜きパイプ: 硬質塩化ビニル管 φ75mm (前面に 2.0㎡ に1箇所の割合で配置)',
           ]
         ),
+      },
+      {
+        id: 'DRW00003',
+        title: '標準横断図・土工定規図（CAD完成図）',
+        type: '完成図',
+        fileName: 'D0001003.P21',
+        filePath: 'DRAWING/D0001003.P21',
+        cadFileName: 'D0001003.P21',
+        scale: '1/50',
+        fileUrl: createMockP21DataUrl(),
       },
     ],
     otherFiles: [],
