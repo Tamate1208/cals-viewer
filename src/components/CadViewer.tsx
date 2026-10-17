@@ -59,7 +59,30 @@ export const CadViewer: React.FC<CadViewerProps> = ({
   const transformRef = useRef(transform);
   transformRef.current = transform;
 
-  // 1. ファイルのフェッチとパース
+  // 1. 図面全体をキャンバス中央に収める（フィット計算）
+  const resetViewToBounds = useCallback((bounds: CadDrawing['bounds']) => {
+    if (!containerRef.current) return;
+    const { clientWidth: cw, clientHeight: ch } = containerRef.current;
+    if (cw === 0 || ch === 0) return;
+
+    const padding = 40;
+    const availW = Math.max(10, cw - padding * 2);
+    const availH = Math.max(10, ch - padding * 2);
+
+    const scaleX = availW / bounds.width;
+    const scaleY = availH / bounds.height;
+    const k = Math.min(scaleX, scaleY, 10.0);
+
+    const centerX = bounds.minX + bounds.width / 2;
+    const centerY = bounds.minY + bounds.height / 2;
+
+    const x = cw / 2 - centerX * k;
+    const y = ch / 2 - (invertY ? -centerY * k : centerY * k);
+
+    setTransform({ x, y, k });
+  }, [invertY]);
+
+  // 2. ファイルのフェッチとパース
   useEffect(() => {
     let isCancelled = false;
 
@@ -70,7 +93,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         return;
       }
 
-      const cacheKey = `${fileUrl}_${fileName}`;
+      const cacheKey = `${fileUrl}_${fileName}_v20261017_textclean_v3`;
       if (drawingCache.has(cacheKey)) {
         const cached = drawingCache.get(cacheKey)!;
         setDrawing(cached);
@@ -125,30 +148,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [fileUrl, fileName]);
-
-  // 2. 図面全体をキャンバス中央に収める（フィット計算）
-  const resetViewToBounds = useCallback((bounds: CadDrawing['bounds']) => {
-    if (!containerRef.current) return;
-    const { clientWidth: cw, clientHeight: ch } = containerRef.current;
-    if (cw === 0 || ch === 0) return;
-
-    const padding = 40;
-    const availW = Math.max(10, cw - padding * 2);
-    const availH = Math.max(10, ch - padding * 2);
-
-    const scaleX = availW / bounds.width;
-    const scaleY = availH / bounds.height;
-    const k = Math.min(scaleX, scaleY, 10.0);
-
-    const centerX = bounds.minX + bounds.width / 2;
-    const centerY = bounds.minY + bounds.height / 2;
-
-    const x = cw / 2 - centerX * k;
-    const y = ch / 2 - (invertY ? -centerY * k : centerY * k);
-
-    setTransform({ x, y, k });
-  }, [invertY]);
+  }, [fileUrl, fileName, resetViewToBounds]);
 
   const handleFitAll = () => {
     if (drawing) {
@@ -243,7 +243,17 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         ctx.textAlign = ent.align || 'left';
         ctx.textBaseline = ent.baseline || (invertY ? 'top' : 'bottom');
         ctx.fillStyle = ent.color || '#f8fafc';
-        ctx.fillText(ent.text, 0, 0);
+
+        // 描画テキストの安全サニタイズ（制御文字の混入を絶対防止）
+        const displayText = ent.text
+          .replace(/\${3}[a-zA-Z0-9_\-\s]+/gi, '')
+          .replace(/＄{3}[a-zA-Z0-9_\-\s]+/gi, '')
+          .replace(/^sxf_[a-zA-Z0-9_\-\s]+/gi, '')
+          .trim();
+
+        if (displayText) {
+          ctx.fillText(displayText, 0, 0);
+        }
 
         ctx.restore();
       }
@@ -339,12 +349,16 @@ export const CadViewer: React.FC<CadViewerProps> = ({
     setHiddenLayers(new Set(drawing.layers.map(l => l.name)));
   };
 
-  // テキスト検索フィルタリング
+  // テキスト検索フィルタリング（制御コード・ノイズを確実に排除）
   const filteredTexts = useMemo(() => {
     if (!drawing) return [];
-    if (!textSearchQuery.trim()) return drawing.textSummary;
+    const validTexts = drawing.textSummary.filter(t => {
+      const clean = t.trim();
+      return clean.length > 0 && !clean.includes('$$$') && !clean.includes('＄＄＄') && !/^sxf_/i.test(clean);
+    });
+    if (!textSearchQuery.trim()) return validTexts;
     const q = textSearchQuery.toLowerCase();
-    return drawing.textSummary.filter(t => t.toLowerCase().includes(q));
+    return validTexts.filter(t => t.toLowerCase().includes(q));
   }, [drawing, textSearchQuery]);
 
   return (
@@ -505,7 +519,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>図面注記・寸法 ({drawing?.textSummary.length || 0})</span>
+                <span>図面注記・寸法 ({filteredTexts.length})</span>
               </button>
               <button
                 onClick={() => setSidePanelTab('layers')}

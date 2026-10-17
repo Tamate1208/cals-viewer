@@ -122,6 +122,56 @@ function decodeStepString(str: string): string {
 }
 
 /**
+ * SXF図面内のテキストおよびアライメント制御コードの分離・本文抽出
+ * 例: "$$$SXF_baseline left 平面図" -> { text: "平面図", align: "left", baseline: "bottom", isValid: true }
+ * 例: "＄＄＄SXF_baseline left" -> { text: "", align: "left", baseline: "bottom", isValid: false }
+ */
+export function extractCleanCadText(rawStr: string): {
+  text: string;
+  align: 'left' | 'center' | 'right';
+  baseline: 'top' | 'middle' | 'bottom' | 'alphabetic';
+  isValid: boolean;
+} {
+  if (!rawStr) return { text: '', align: 'left', baseline: 'bottom', isValid: false };
+
+  // 1. 全角＄を半角$に統一、余白トリム
+  let str = rawStr.trim().replace(/＄/g, '$');
+
+  // 2. アライメント（配置基準）の検出
+  let align: 'left' | 'center' | 'right' = 'left';
+  let baseline: 'top' | 'middle' | 'bottom' | 'alphabetic' = 'bottom';
+  const lower = str.toLowerCase();
+
+  if (lower.includes('center')) align = 'center';
+  else if (lower.includes('right')) align = 'right';
+  else if (lower.includes('left')) align = 'left';
+
+  if (lower.includes('middle')) baseline = 'middle';
+  else if (lower.includes('top')) baseline = 'top';
+  else if (lower.includes('baseline') || lower.includes('bottom')) baseline = 'bottom';
+
+  // 3. $$$SXF_... または $$$... または SXF_... の制御文字列をピンポイントで完全除去
+  const cleaned = str
+    .replace(/\${3}SXF_[a-zA-Z0-9_\-\s]+/gi, '')
+    .replace(/\${3}[a-zA-Z0-9_\-\s]+/gi, '')
+    .replace(/^SXF_[a-zA-Z0-9_\-\s]+/gi, '')
+    .trim();
+
+  // 4. CAD内部のシステム定義文字・フォント名ノイズを徹底除外
+  const isSystemNoise =
+    /^(SXF|ISO|CAD|AUTOCAD|STANDARD|KANJI|GOTHIC|MINCHO|DEFAULT|LEVEL|DRAUGHTING|DIMENSION_STYLE|BYLAYER)/i.test(cleaned) ||
+    cleaned.includes('$$$') ||
+    cleaned.includes('＄＄＄');
+
+  return {
+    text: cleaned,
+    align,
+    baseline,
+    isValid: cleaned.length > 0 && !isSystemNoise,
+  };
+}
+
+/**
  * CAD標準カラーパレットの解決
  * 国交省CAD基準およびJISカラー番号対応
  */
@@ -169,14 +219,14 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
 
   const entityMap = new Map<string, { type: string; rawArgs: string }>();
 
-  // 正規表現で #ID = TYPE(ARGS); を高速スキャン
-  const entityRegex = /#(\d+)\s*=\s*([A-Za-z0-9_]+)\s*\(([\s\S]*?)\);(?=\s*(?:#|\n|ENDSEC|$))/g;
+  // 正規表現で #ID = TYPE(ARGS); または複合エンティティ #ID = ( ... ); を高速スキャン
+  const entityRegex = /#(\d+)\s*=\s*(?:([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)|\(([\s\S]*?)\))\s*;\s*(?=(?:#|\n|ENDSEC|$))/g;
   let match: RegExpExecArray | null;
 
   while ((match = entityRegex.exec(cleanContent)) !== null) {
     const id = match[1];
-    const type = match[2].toUpperCase();
-    const rawArgs = match[3];
+    const type = match[2] ? match[2].toUpperCase() : 'COMPLEX';
+    const rawArgs = match[3] !== undefined ? match[3] : (match[4] || '');
     entityMap.set(id, { type, rawArgs });
   }
 
@@ -522,12 +572,12 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       }
     }
 
-    // --- D. TEXT / TEXT_LITERAL / DRAUGHTING_TEXT ---
+    // --- D. TEXT / TEXT_LITERAL / DRAUGHTING_TEXT / ANNOTATION ---
     else if (
-      (type === 'TEXT_LITERAL' ||
-       type === 'TEXT_LITERAL_WITH_EXTENT' ||
-       type === 'DRAUGHTING_TEXT_LITERAL' ||
-       type.endsWith('_TEXT')) &&
+      (type.includes('TEXT') ||
+       type.includes('ANNOTATION') ||
+       type.includes('LITERAL') ||
+       type === 'COMPLEX') &&
       !type.includes('STYLE') &&
       !type.includes('FONT') &&
       !type.includes('TABLE') &&
@@ -545,21 +595,34 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         .filter(a => a.startsWith("'") && a.endsWith("'"))
         .map(a => decodeStepString(a.slice(1, -1)));
 
-      for (const str of strArgs) {
-        // $$$SXF_ で始まる制御文字列（アライメント指定）の解析・完全分離
-        if (str.startsWith('$$$SXF_') || str.startsWith('SXF_') || str.startsWith('$$$')) {
-          const lower = str.toLowerCase();
-          if (lower.includes('center')) align = 'center';
-          else if (lower.includes('right')) align = 'right';
-          else if (lower.includes('left')) align = 'left';
+      for (const raw of strArgs) {
+        const cleaned = extractCleanCadText(raw);
+        if (cleaned.align !== 'left') align = cleaned.align;
+        if (cleaned.baseline !== 'bottom') baseline = cleaned.baseline;
 
-          if (lower.includes('middle')) baseline = 'middle';
-          else if (lower.includes('top')) baseline = 'top';
-          else if (lower.includes('baseline') || lower.includes('bottom')) baseline = 'bottom';
-        } else {
-          // 本物の本文テキスト
-          if (!textStr && str.trim().length > 0 && !str.includes('$$$')) {
-            textStr = str.trim();
+        if (!textStr && cleaned.isValid) {
+          textStr = cleaned.text;
+        }
+      }
+
+      // 引数に文字列が直接ない場合、参照先エンティティ(#ID)からテキスト本文を救出
+      if (!textStr) {
+        for (const arg of args) {
+          if (arg.startsWith('#')) {
+            const subEnt = entityMap.get(arg.replace('#', ''));
+            if (subEnt && (subEnt.type.includes('TEXT') || subEnt.type.includes('LITERAL'))) {
+              const subArgs = parseArgs(subEnt.rawArgs)
+                .filter(a => a.startsWith("'") && a.endsWith("'"))
+                .map(a => decodeStepString(a.slice(1, -1)));
+              for (const subRaw of subArgs) {
+                const subCleaned = extractCleanCadText(subRaw);
+                if (subCleaned.align !== 'left') align = subCleaned.align;
+                if (subCleaned.baseline !== 'bottom') baseline = subCleaned.baseline;
+                if (!textStr && subCleaned.isValid) {
+                  textStr = subCleaned.text;
+                }
+              }
+            }
           }
         }
       }
@@ -569,8 +632,11 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         if (arg.startsWith('#') && !pos) {
           pos = resolvePoint(arg);
           const placeEnt = entityMap.get(arg.replace('#', ''));
-          if (placeEnt && placeEnt.type.includes('AXIS2_PLACEMENT')) {
+          if (placeEnt) {
             const pArgs = parseArgs(placeEnt.rawArgs);
+            if (!pos && pArgs[0] && pArgs[0].startsWith('#')) {
+              pos = resolvePoint(pArgs[0]);
+            }
             const dirRef = pArgs[2] || pArgs[1];
             if (dirRef && dirRef.startsWith('#')) {
               const dirEnt = entityMap.get(dirRef.replace('#', ''));
@@ -591,12 +657,8 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         }
       }
 
-      // CAD内部のシステム定義文字・フォント名ノイズ・$$$制御文字を徹底除外
-      const isSystemNoise = 
-        /^(SXF|ISO|CAD|AUTOCAD|STANDARD|KANJI|GOTHIC|MINCHO|DEFAULT|LEVEL|DRAUGHTING|DIMENSION_STYLE|BYLAYER)/i.test(textStr) ||
-        textStr.includes('$$$');
-
-      if (textStr && textStr.trim().length > 0 && !isSystemNoise && pos) {
+      // 有効なテキストと座標がある場合のみ登録（制御文字やシステムノイズは除外済み）
+      if (textStr && textStr.trim().length > 0 && pos) {
         entities.push({
           type: 'text',
           text: textStr.trim(),
@@ -651,13 +713,13 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     count: stat.count,
   }));
 
-  // 7. 図面内テキスト・注記・寸法値のサマリー抽出（重複除去）
+  // 7. 図面内テキスト・注記・寸法値のサマリー抽出（重複除去 & 制御コード徹底排除）
   const textSummarySet = new Set<string>();
   for (const ent of entities) {
     if (ent.type === 'text' && ent.text) {
-      const clean = ent.text.trim();
-      if (clean.length >= 1 && !clean.includes('$$$') && !textSummarySet.has(clean)) {
-        textSummarySet.add(clean);
+      const cleaned = extractCleanCadText(ent.text);
+      if (cleaned.isValid && !textSummarySet.has(cleaned.text)) {
+        textSummarySet.add(cleaned.text);
       }
     }
   }
@@ -778,22 +840,20 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
       if (textStart !== -1 && i - textStart >= 4) {
         const sub = bytes.subarray(textStart, i);
         try {
-          const str = decoder.decode(sub).trim();
-          if (str.length >= 2 && !/^[\s\d_]+$/.test(str)) {
-            // システムヘッダー・規格識別子・制御文字の除外
-            if (/^(SXF|ISO|PK|AutoCAD|JACIC|LEVEL|STANDARD|DRAUGHTING|DIMENSION|BYLAYER|\$\$\$)/i.test(str)) {
-              textStart = -1;
-              continue;
+          const rawStr = decoder.decode(sub).trim();
+          if (rawStr.length >= 2 && !/^[\s\d_]+$/.test(rawStr)) {
+            const cleaned = extractCleanCadText(rawStr);
+            if (cleaned.isValid) {
+              const pos = extractedPoints[entities.length % Math.max(1, extractedPoints.length)] || { x: 50, y: 50 };
+              entities.push({
+                type: 'text',
+                text: cleaned.text,
+                position: { x: pos.x, y: pos.y },
+                height: 4.5,
+                color: '#f8fafc',
+                layer: '注記・文字 (M-T)',
+              });
             }
-            const pos = extractedPoints[entities.length % Math.max(1, extractedPoints.length)] || { x: 50, y: 50 };
-            entities.push({
-              type: 'text',
-              text: str,
-              position: { x: pos.x, y: pos.y },
-              height: 4.5,
-              color: '#f8fafc',
-              layer: '注記・文字 (M-T)',
-            });
           }
         } catch {
           // ignore
@@ -832,7 +892,16 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
     count: stat.count,
   }));
 
-  const textSummary = Array.from(new Set(entities.filter(e => e.type === 'text').map(e => (e as CadText).text.trim()).filter(Boolean)));
+  const textSummarySet = new Set<string>();
+  for (const ent of entities) {
+    if (ent.type === 'text' && ent.text) {
+      const cleaned = extractCleanCadText(ent.text);
+      if (cleaned.isValid && !textSummarySet.has(cleaned.text)) {
+        textSummarySet.add(cleaned.text);
+      }
+    }
+  }
+  const textSummary = Array.from(textSummarySet);
 
   const bounds = calculateBounds(entities);
 
