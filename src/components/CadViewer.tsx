@@ -212,9 +212,12 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       // --- 円・円弧 ---
       else if (ent.type === 'circle') {
         ctx.beginPath();
-        const start = ent.isArc && ent.startAngle !== undefined ? ent.startAngle : 0;
-        const end = ent.isArc && ent.endAngle !== undefined ? ent.endAngle : Math.PI * 2;
-        ctx.arc(ent.center.x, ent.center.y, ent.radius, start, end);
+        if (ent.isArc && ent.startAngle !== undefined && ent.endAngle !== undefined) {
+          const ccw = invertY ? !ent.clockwise : !!ent.clockwise;
+          ctx.arc(ent.center.x, ent.center.y, ent.radius, ent.startAngle, ent.endAngle, ccw);
+        } else {
+          ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, Math.PI * 2);
+        }
         ctx.stroke();
       }
       // --- 文字・寸法値 ---
@@ -234,12 +237,12 @@ export const CadViewer: React.FC<CadViewerProps> = ({
 
         // 画面上でのフォントサイズ計算（小さすぎて読めないドット化を防止）
         const rawHeight = ent.height || 4.0;
-        // 画面上で最低 8px 相当の視認性を確保
         const screenPx = rawHeight * transform.k;
         const renderHeight = screenPx < 7 ? 7 / transform.k : rawHeight;
 
         ctx.font = `${renderHeight}px "Yu Gothic", "Meiryo", sans-serif`;
-        ctx.textBaseline = 'bottom';
+        ctx.textAlign = ent.align || 'left';
+        ctx.textBaseline = ent.baseline || (invertY ? 'top' : 'bottom');
         ctx.fillStyle = ent.color || '#f8fafc';
         ctx.fillText(ent.text, 0, 0);
 

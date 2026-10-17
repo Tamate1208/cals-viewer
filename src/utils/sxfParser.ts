@@ -4,9 +4,10 @@
  * 国土交通省・地方自治体「CAD製図基準」に準拠した SXF レベル2 形式（P21 / SFC）を
  * ブラウザのメモリ上で直接解析し、ベクター描画可能な共通データ構造に変換します。
  * 
- * - 実レイヤー定義（SXF_LAYER / PRESENTATION_LAYER_ASSIGNMENT 等）の完全解析
+ * - 実レイヤー定義（SXF_TABLE_LAYER / SXF_LAYER / PRESENTATION_LAYER_ASSIGNMENT）の完全解析
  * - ネストされた座標配置（AXIS2_PLACEMENT_2D 等）からの位置・回転角の正確な抽出
- * - 日本語文字（Shift_JIS / ISO 10303-21 \X2\ Unicodeエスケープ）の完全デコード
+ * - 日本語文字および $$$SXF_ 制御文字列（アライメント）の分離・本文テキスト抽出
+ * - 円弧（TRIMMED_CURVE / sxf_arc）の回転方向・角度正規化（超巨大全円化の防止）
  * - オフライン・外部ライブラリ非依存（JSZipのみ使用）で動作
  */
 
@@ -33,6 +34,7 @@ export interface CadCircle {
   startAngle?: number; // radians
   endAngle?: number;   // radians
   isArc?: boolean;
+  clockwise?: boolean; // 回転方向
   color: string;
   layer: string;
 }
@@ -51,6 +53,8 @@ export interface CadText {
   position: CadPoint;
   height: number;
   angle?: number; // radians
+  align?: 'left' | 'center' | 'right';
+  baseline?: 'top' | 'middle' | 'bottom' | 'alphabetic';
   color: string;
   layer: string;
 }
@@ -206,24 +210,67 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     return args;
   };
 
-  // 3. レイヤー定義の解析
-  // A. レイヤー定義テーブル (#ID -> レイヤー名, 色)
+  // 3. レイヤー定義の解析（CAD固有テーブルの完全対応）
+  // A. レイヤーID (#ID) -> レイヤー名
+  const layerIdMap = new Map<string, string>();
+  // B. レイヤー番号 (1, 2, 3...) -> レイヤー名
+  const layerNumberMap = new Map<number, string>();
+  // C. レイヤー名 -> { name, color }
   const layerDefMap = new Map<string, { name: string; color: string }>();
-  // B. エンティティID -> 所属レイヤー名 (逆引きマップ)
+  // D. エンティティID -> 所属レイヤー名
   const entityLayerMap = new Map<string, string>();
 
-  // PRESENTATION_LAYER_ASSIGNMENT('レイヤー名', '説明', (#ent1, #ent2, ...)) の解析
-  entityMap.forEach((ent) => {
+  // SXF_TABLE_LAYER, SXF_LAYER, PRESENTATION_LAYER_ASSIGNMENT の全解析
+  entityMap.forEach((ent, entId) => {
     const type = ent.type;
     const args = parseArgs(ent.rawArgs);
 
-    if (
+    // --- SXF_LAYER('レイヤー名', レイヤー番号, 色番号, 線種番号, 表示状態) ---
+    if (type === 'SXF_LAYER' || type.endsWith('_LAYER')) {
+      const name = decodeStepString(args[0]?.replace(/^'|'$/g, '')) || `Layer_${args[1] || entId}`;
+      const num = parseInt(args[1], 10);
+      const colorVal = args[2] ? parseInt(args[2], 10) : undefined;
+      const color = resolveCadColor(colorVal);
+
+      layerIdMap.set(entId, name);
+      if (!isNaN(num)) layerNumberMap.set(num, name);
+      layerDefMap.set(name, { name, color });
+    }
+    // --- SXF_TABLE_LAYER(('レイヤー名1', 'レイヤー名2', ...)) ---
+    else if (type.includes('TABLE_LAYER')) {
+      const listStr = args.find(a => a.startsWith('(') && a.endsWith(')')) || args[0];
+      if (listStr) {
+        const items = listStr.replace(/[()]/g, '').split(',').map(s => s.trim());
+        items.forEach((item, idx) => {
+          if (item.startsWith('#')) {
+            // 参照ID
+            const ref = item.replace('#', '');
+            const refEnt = entityMap.get(ref);
+            if (refEnt) {
+              const rArgs = parseArgs(refEnt.rawArgs);
+              const rName = decodeStepString(rArgs[0]?.replace(/^'|'$/g, '')) || `Layer_${idx + 1}`;
+              layerIdMap.set(ref, rName);
+              layerNumberMap.set(idx + 1, rName);
+              layerDefMap.set(rName, { name: rName, color: resolveCadColor(rArgs[2] ? parseInt(rArgs[2], 10) : idx + 1) });
+            }
+          } else {
+            // 直接レイヤー名
+            const lName = decodeStepString(item.replace(/^'|'$/g, ''));
+            if (lName) {
+              layerNumberMap.set(idx + 1, lName);
+              layerDefMap.set(lName, { name: lName, color: resolveCadColor(idx + 1) });
+            }
+          }
+        });
+      }
+    }
+    // --- PRESENTATION_LAYER_ASSIGNMENT('レイヤー名', ..., (#1, #2, ...)) ---
+    else if (
       type === 'PRESENTATION_LAYER_ASSIGNMENT' ||
       type.includes('LAYER_ASSIGNMENT') ||
       type.includes('SXF_LAYER_ASSIGNMENT')
     ) {
       const layerName = decodeStepString(args[0]?.replace(/^'|'$/g, '')) || '一般';
-      // 第3引数の (#1, #2, ...)
       const refsArg = args.find(a => a.startsWith('(') && a.endsWith(')')) || args[2];
       if (refsArg) {
         const refs = refsArg.replace(/[()]/g, '').split(',').map(s => s.trim().replace(/^#/, ''));
@@ -234,12 +281,6 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       if (!layerDefMap.has(layerName)) {
         layerDefMap.set(layerName, { name: layerName, color: resolveCadColor(layerName) });
       }
-    } else if (type === 'SXF_LAYER' || type.includes('TABLE_LAYER') || type === 'DRAUGHTING_SUBFIGURE_REPRESENTATION') {
-      // SXF_LAYER('レイヤー名', 番号, 色, ...)
-      const layerName = decodeStepString(args[0]?.replace(/^'|'$/g, '')) || `Layer_${args[1] || ''}`;
-      const colorVal = args[2] ? parseInt(args[2], 10) : undefined;
-      const color = resolveCadColor(colorVal);
-      layerDefMap.set(layerName, { name: layerName, color });
     }
   });
 
@@ -247,7 +288,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
   const pointCache = new Map<string, CadPoint>();
 
   const resolvePoint = (ref: string, depth: number = 0): CadPoint | null => {
-    if (depth > 6) return null; // 無限ループ防止
+    if (depth > 6) return null;
     const cleanRef = ref.replace(/^[#\s]+/, '').trim();
     if (pointCache.has(cleanRef)) return pointCache.get(cleanRef)!;
 
@@ -271,7 +312,6 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     }
 
     // AXIS2_PLACEMENT_2D('', #location, #axis) または AXIS2_PLACEMENT_3D
-    // 文字やブロックの配置点構造
     if (type.includes('AXIS2_PLACEMENT') || type.includes('PLACEMENT') || type.includes('TRANSFORMATION')) {
       const pRef = args.find(a => a.startsWith('#'));
       if (pRef) {
@@ -283,7 +323,6 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       }
     }
 
-    // GEOMETRIC_REPRESENTATION_CONTEXT / ITEM からの参照
     for (const arg of args) {
       if (arg.startsWith('#')) {
         const pt = resolvePoint(arg, depth + 1);
@@ -299,14 +338,30 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     const type = ent.type;
     const args = parseArgs(ent.rawArgs);
 
-    // 所属レイヤーの解決
+    // 所属レイヤーの厳密解決（CADのレイヤー定義を優先）
     let layer = entityLayerMap.get(entId);
     if (!layer) {
-      // 標準レイヤーの推測 (CAD製図基準)
-      if (type.includes('TEXT')) layer = '注記・文字 (M-T)';
-      else if (type.includes('CIRCLE') || type.includes('ARC')) layer = '構造・詳細 (S-C)';
-      else if (type.includes('POLYLINE') || type.includes('CURVE')) layer = '一般図面線';
-      else layer = '一般図面線';
+      // エンティティ引数内のレイヤー参照 (#layer_id または レイヤー番号) を探索
+      for (const arg of args) {
+        if (arg.startsWith('#')) {
+          const ref = arg.replace('#', '');
+          if (layerIdMap.has(ref)) {
+            layer = layerIdMap.get(ref);
+            break;
+          }
+        } else {
+          const num = parseInt(arg, 10);
+          if (!isNaN(num) && layerNumberMap.has(num)) {
+            layer = layerNumberMap.get(num);
+            break;
+          }
+        }
+      }
+    }
+
+    // デフォルトレイヤー名
+    if (!layer) {
+      layer = '0';
     }
 
     const layerDef = layerDefMap.get(layer);
@@ -386,8 +441,9 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       let startAngle = 0;
       let endAngle = Math.PI * 2;
       let isArc = false;
+      let clockwise = false;
 
-      // TRIMMED_CURVE('', #basis, (#start), (#end), .T., .PARAMETER.); の場合
+      // TRIMMED_CURVE('', #basis, (#p1), (#p2), .T./.F., ...) の解析
       if (type.includes('TRIMMED_CURVE')) {
         const basisRef = args[1]?.replace(/^#/, '');
         const basisEnt = basisRef ? entityMap.get(basisRef) : null;
@@ -399,37 +455,44 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
             radius = r;
           }
 
-          // トリムパラメータの抽出
-          const p1 = parseFloat(args[2]?.replace(/[()]/g, ''));
-          const p2 = parseFloat(args[3]?.replace(/[()]/g, ''));
+          // トリムパラメータ (角度)
+          const p1Str = args[2]?.replace(/[()]/g, '').trim();
+          const p2Str = args[3]?.replace(/[()]/g, '').trim();
+          const p1 = parseFloat(p1Str);
+          const p2 = parseFloat(p2Str);
+
+          // 回転方向 (.T. = 反時計回り, .F. = 時計回り)
+          const sense = args[4]?.toUpperCase();
+          if (sense === '.F.') {
+            clockwise = true;
+          }
+
           if (!isNaN(p1) && !isNaN(p2)) {
-            // パラメータがラジアンまたは度数
-            startAngle = p1 > 10 ? (p1 * Math.PI) / 180 : p1;
-            endAngle = p2 > 10 ? (p2 * Math.PI) / 180 : p2;
+            // パラメータが度数法 (> 6.3) かラジアン (<= 6.3) かを正確に判定
+            startAngle = Math.abs(p1) > 6.3 ? (p1 * Math.PI) / 180 : p1;
+            endAngle = Math.abs(p2) > 6.3 ? (p2 * Math.PI) / 180 : p2;
             isArc = true;
           }
         }
       } else {
-        // 通常の CIRCLE('', #placement, radius)
-        // args[1] は通常 placement/center, args[2] は radius
+        // 通常の CIRCLE('', #axis, radius) または sxf_arc(name, #placement, radius, a1, a2)
         const pRef = args.find(a => a.startsWith('#'));
         if (pRef) {
           center = resolvePoint(pRef);
         }
 
-        // 半径の取得: 通常は第2または第3引数の正の数値（角度等は拾わない）
+        // 半径の取得: 第2〜3引数あたりの正の数値
         for (let i = 1; i < args.length; i++) {
           const num = parseFloat(args[i]);
-          // 有効な半径値（100m以内の現実的なサイズ）
-          if (!isNaN(num) && num > 0.01 && num < 30000) {
+          if (!isNaN(num) && num > 0.05 && num < 30000) {
             radius = num;
-            // もし後続に開始角・終了角がある場合 (sxf_arc)
+            // 後続に角度がある場合 (sxf_arc)
             if (args[i + 1] && args[i + 2]) {
               const a1 = parseFloat(args[i + 1]);
               const a2 = parseFloat(args[i + 2]);
               if (!isNaN(a1) && !isNaN(a2)) {
-                startAngle = (a1 * Math.PI) / 180;
-                endAngle = (a2 * Math.PI) / 180;
+                startAngle = Math.abs(a1) > 6.3 ? (a1 * Math.PI) / 180 : a1;
+                endAngle = Math.abs(a2) > 6.3 ? (a2 * Math.PI) / 180 : a2;
                 isArc = true;
               }
             }
@@ -438,8 +501,8 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         }
       }
 
-      // 有効な中心と半径を持つ円・円弧のみを描画登録（異常な巨大円は排除）
-      if (center && radius !== null && radius > 0.05 && radius < 20000) {
+      // 有効な中心と半径を持つ円・円弧のみを描画登録
+      if (center && radius !== null && radius > 0.05 && radius < 25000) {
         entities.push({
           type: 'circle',
           center,
@@ -447,6 +510,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
           startAngle,
           endAngle,
           isArc,
+          clockwise,
           color: defaultColor,
           layer,
         });
@@ -468,18 +532,36 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       let pos: CadPoint | null = null;
       let height = 3.5;
       let angle = 0;
+      let align: 'left' | 'center' | 'right' = 'left';
+      let baseline: 'top' | 'middle' | 'bottom' | 'alphabetic' = 'bottom';
 
-      for (const arg of args) {
-        // 文字列の取得
-        if (arg.startsWith("'") && arg.endsWith("'")) {
-          const raw = arg.slice(1, -1);
-          const decoded = decodeStepString(raw);
-          if (decoded && !textStr) {
-            textStr = decoded;
+      // 文字列引数をすべて走査
+      const strArgs = args
+        .filter(a => a.startsWith("'") && a.endsWith("'"))
+        .map(a => decodeStepString(a.slice(1, -1)));
+
+      for (const str of strArgs) {
+        // $$$SXF_ で始まる制御文字列（アライメント指定）の解析・分離
+        if (str.startsWith('$$$SXF_') || str.startsWith('SXF_')) {
+          const lower = str.toLowerCase();
+          if (lower.includes('center')) align = 'center';
+          else if (lower.includes('right')) align = 'right';
+          else if (lower.includes('left')) align = 'left';
+
+          if (lower.includes('middle')) baseline = 'middle';
+          else if (lower.includes('top')) baseline = 'top';
+          else if (lower.includes('baseline') || lower.includes('bottom')) baseline = 'bottom';
+        } else {
+          // 本物の本文テキスト
+          if (!textStr && str.trim().length > 0) {
+            textStr = str.trim();
           }
         }
-        // 配置座標の解決
-        else if (arg.startsWith('#') && !pos) {
+      }
+
+      // 配置座標の解決
+      for (const arg of args) {
+        if (arg.startsWith('#') && !pos) {
           pos = resolvePoint(arg);
           const placeEnt = entityMap.get(arg.replace('#', ''));
           if (placeEnt && placeEnt.type.includes('AXIS2_PLACEMENT')) {
@@ -496,9 +578,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
               }
             }
           }
-        }
-        // 文字高さ
-        else {
+        } else if (!arg.startsWith('#') && !arg.startsWith("'")) {
           const num = parseFloat(arg);
           if (!isNaN(num) && num > 0.5 && num < 100) {
             height = num;
@@ -516,8 +596,10 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
           position: pos,
           height: height || 3.5,
           angle,
+          align,
+          baseline,
           color: defaultColor === '#38bdf8' ? '#f8fafc' : defaultColor,
-          layer: layer === '一般図面線' ? '注記・文字 (M-T)' : layer,
+          layer,
         });
       }
     }
@@ -532,7 +614,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         p1: pts[i],
         p2: pts[i + 1],
         color: '#38bdf8',
-        layer: '図面要素',
+        layer: '0',
       });
     }
   }
@@ -540,7 +622,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
   // 6. レイヤー統計の集計
   const layerStats = new Map<string, { color: string; count: number }>();
   for (const ent of entities) {
-    const lName = ent.layer || '一般';
+    const lName = ent.layer || '0';
     const existing = layerStats.get(lName);
     if (existing) {
       existing.count++;
@@ -548,6 +630,13 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       layerStats.set(lName, { color: ent.color || '#38bdf8', count: 1 });
     }
   }
+
+  // 定義されているが要素数が0の画層もレイヤー一覧に含める（CAD仕様準拠）
+  layerDefMap.forEach((def, name) => {
+    if (!layerStats.has(name)) {
+      layerStats.set(name, { color: def.color, count: 0 });
+    }
+  });
 
   const layers: CadLayerInfo[] = Array.from(layerStats.entries()).map(([name, stat]) => ({
     name,
@@ -671,8 +760,8 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
         try {
           const str = decoder.decode(sub).trim();
           if (str.length >= 2 && !/^[\s\d_]+$/.test(str)) {
-            // システムヘッダー・規格識別子の除外
-            if (/^(SXF|ISO|PK|AutoCAD|JACIC|LEVEL|STANDARD|DRAUGHTING|DIMENSION|BYLAYER)/i.test(str)) {
+            // システムヘッダー・規格識別子・制御文字の除外
+            if (/^(SXF|ISO|PK|AutoCAD|JACIC|LEVEL|STANDARD|DRAUGHTING|DIMENSION|BYLAYER|\$\$\$)/i.test(str)) {
               textStart = -1;
               continue;
             }
