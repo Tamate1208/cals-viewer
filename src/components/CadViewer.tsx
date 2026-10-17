@@ -93,7 +93,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         return;
       }
 
-      const cacheKey = `${fileUrl}_${fileName}_v20261017_textclean_v3`;
+      const cacheKey = `${fileUrl}_${fileName}_v20261017_complex_decomp_v4`;
       if (drawingCache.has(cacheKey)) {
         const cached = drawingCache.get(cacheKey)!;
         setDrawing(cached);

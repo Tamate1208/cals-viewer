@@ -335,7 +335,21 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     }
   });
 
-  // 4. 座標点 (#id -> CadPoint) および 配置 (AXIS2_PLACEMENT) の再帰的解決キャッシュ
+  // 4. 複合エンティティの内部サブエンティティ分解ヘルパー
+  const decomposeComplexEntity = (raw: string): Array<{ type: string; rawArgs: string }> => {
+    const subEntities: Array<{ type: string; rawArgs: string }> = [];
+    const subRegex = /([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)(?=\s*(?:[A-Za-z0-9_]+\s*\(|$))/g;
+    let match: RegExpExecArray | null;
+    while ((match = subRegex.exec(raw)) !== null) {
+      subEntities.push({
+        type: match[1].toUpperCase(),
+        rawArgs: match[2],
+      });
+    }
+    return subEntities;
+  };
+
+  // 5. 座標点 (#id -> CadPoint) および 配置 (AXIS2_PLACEMENT) の再帰的解決キャッシュ
   const pointCache = new Map<string, CadPoint>();
 
   const resolvePoint = (ref: string, depth: number = 0): CadPoint | null => {
@@ -347,6 +361,37 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     if (!ent) return null;
 
     const type = ent.type;
+
+    // 複合エンティティの場合、内部の CARTESIAN_POINT や PLACEMENT を探索
+    if (type === 'COMPLEX') {
+      const subs = decomposeComplexEntity(ent.rawArgs);
+      for (const sub of subs) {
+        if (sub.type.includes('CARTESIAN_POINT') || sub.type === 'POINT' || sub.type.endsWith('_POINT')) {
+          const sArgs = parseArgs(sub.rawArgs);
+          const coordArg = sArgs.find(a => a.startsWith('(') && a.endsWith(')')) || sArgs[1] || sArgs[0];
+          if (coordArg) {
+            const nums = coordArg.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim()));
+            if (!isNaN(nums[0]) && !isNaN(nums[1])) {
+              const pt: CadPoint = { x: nums[0], y: nums[1] };
+              pointCache.set(cleanRef, pt);
+              return pt;
+            }
+          }
+        }
+        if (sub.type.includes('AXIS2_PLACEMENT') || sub.type.includes('PLACEMENT') || sub.type.includes('TRANSFORMATION')) {
+          const sArgs = parseArgs(sub.rawArgs);
+          const pRef = sArgs.find(a => a.startsWith('#'));
+          if (pRef) {
+            const pt = resolvePoint(pRef, depth + 1);
+            if (pt) {
+              pointCache.set(cleanRef, pt);
+              return pt;
+            }
+          }
+        }
+      }
+    }
+
     const args = parseArgs(ent.rawArgs);
 
     // CARTESIAN_POINT('', (x, y, [z]))
@@ -386,14 +431,20 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
 
   // 5. 各エンティティのジオメトリ変換
   entityMap.forEach((ent, entId) => {
-    const type = ent.type;
-    const args = parseArgs(ent.rawArgs);
+    // 複合エンティティの場合は内部のサブエンティティを順に処理、通常エンティティはそのまま
+    const subList = ent.type === 'COMPLEX'
+      ? decomposeComplexEntity(ent.rawArgs)
+      : [ent];
 
     // 所属レイヤーの厳密解決（CADのレイヤー定義を優先）
     let layer = entityLayerMap.get(entId);
     if (!layer) {
       // エンティティ引数内のレイヤー参照 (#layer_id または レイヤー番号) を探索
-      for (const arg of args) {
+      const checkArgs = ent.type === 'COMPLEX'
+        ? subList.flatMap(s => parseArgs(s.rawArgs))
+        : parseArgs(ent.rawArgs);
+
+      for (const arg of checkArgs) {
         if (arg.startsWith('#')) {
           const ref = arg.replace('#', '');
           if (layerIdMap.has(ref)) {
@@ -418,8 +469,12 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     const layerDef = layerDefMap.get(layer);
     const defaultColor = layerDef?.color || resolveCadColor(layer);
 
-    // --- A. LINE / SXF_LINE ---
-    if (type === 'LINE' || type.endsWith('_LINE')) {
+    for (const targetEnt of subList) {
+      const type = targetEnt.type;
+      const args = parseArgs(targetEnt.rawArgs);
+
+      // --- A. LINE / SXF_LINE ---
+      if (type === 'LINE' || type.endsWith('_LINE')) {
       let p1: CadPoint | null = null;
       let p2: CadPoint | null = null;
 
@@ -672,7 +727,8 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         });
       }
     }
-  });
+  }
+});
 
   // フォールバック: 点群からのライン抽出
   if (entities.length === 0 && pointCache.size >= 2) {
