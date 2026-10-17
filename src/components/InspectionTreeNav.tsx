@@ -927,17 +927,85 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
     const isSingle = items.length === 1 && items[0].title === gTitle;
     const propBadge = data.proposalItem ? getProposalBadge(data.proposalItem) : null;
 
-    // 単独ファイルの場合は階層を深くせず直接表示
+    // 図面グループの場合: 鑑・添付の主従関係ではなく、全図面を対等な図面一覧として「図面名（title）」で表示
+    if (data.type === 'drawing') {
+      const isAnySelected = items.some(it => it.id === selectedDrawingId);
+      return (
+        <div key={gTitle} className="space-y-0.5">
+          {/* 「完成図面一式」見出しフォルダ */}
+          <div
+            onClick={() => toggleFolder(subKey)}
+            className={`flex items-center justify-between p-1.5 rounded transition cursor-pointer select-none ${
+              isAnySelected ? 'bg-slate-900 text-white' : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-1.5 truncate flex-1 min-w-0">
+              {subOpen ? (
+                <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              )}
+              <FolderGit2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span className="text-xs font-semibold truncate">{gTitle}</span>
+            </div>
+            <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.2 rounded-full shrink-0">
+              {items.length}
+            </span>
+          </div>
+
+          {/* 図面一覧（全件、図面名で表示） */}
+          {subOpen && (
+            <div className="ml-3 pl-2 border-l border-slate-800 space-y-0.5 mt-0.5">
+              {items.map((item) => {
+                const isSelected = item.id === selectedDrawingId;
+                const rec = inspectionRecords[item.id];
+                const drawing = item as DrawingItem;
+
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => onSelectDrawing(item.id)}
+                    style={{ contentVisibility: 'auto', containIntrinsicSize: '24px' }}
+                    className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
+                      isSelected
+                        ? 'bg-blue-600/25 text-blue-300 font-semibold border border-blue-500/40'
+                        : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+                    }`}
+                  >
+                    <div className="shrink-0">
+                      {rec?.status === 'ok' ? (
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                      ) : rec?.status === 'issue' ? (
+                        <AlertCircle className="w-3 h-3 text-rose-400" />
+                      ) : (
+                        <FolderGit2 className="w-3 h-3 text-slate-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1 truncate text-[11px] flex items-center justify-between gap-1.5">
+                      <span className="truncate">{item.title || item.fileName}</span>
+                      {drawing.scale && (
+                        <span className="text-[10px] text-slate-500 font-mono shrink-0">({drawing.scale})</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 単独ファイル（報告書・書類）の場合は階層を深くせず直接表示
     if (isSingle) {
       const item = items[0];
-      const isDrawing = data.type === 'drawing';
-      const isSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
+      const isSelected = item.id === selectedReportId;
       const rec = inspectionRecords[item.id];
 
       return (
         <button
           key={item.id}
-          onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+          onClick={() => onSelectReport(item.id)}
           style={{ contentVisibility: 'auto', containIntrinsicSize: '28px' }}
           className={`w-full text-left p-1 rounded flex items-start gap-1.5 transition ${
             isSelected
@@ -950,8 +1018,6 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
               <CheckCircle2 className="w-3 h-3 text-emerald-400" />
             ) : rec?.status === 'issue' ? (
               <AlertCircle className="w-3 h-3 text-rose-400" />
-            ) : isDrawing ? (
-              <FolderGit2 className="w-3 h-3 text-slate-500" />
             ) : (
               <FileText className="w-3 h-3 text-slate-500" />
             )}
@@ -974,9 +1040,8 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
     const origFiles = subFiles.filter(it => 'fileRole' in it && it.fileRole === 'オリジナル原典');
     const origKey = propName ? `doc_orig_${catName}_${propName}_${gTitle}` : `doc_orig_${catName}_${gTitle}`;
     const origOpen = isFolderOpen(origKey);
-    const isDrawing = data.type === 'drawing';
-    const isFirstSelected = isDrawing ? firstItem.id === selectedDrawingId : firstItem.id === selectedReportId;
-    const isAnySelected = items.some(it => isDrawing ? it.id === selectedDrawingId : it.id === selectedReportId);
+    const isFirstSelected = firstItem.id === selectedReportId;
+    const isAnySelected = items.some(it => it.id === selectedReportId);
     const recFirst = inspectionRecords[firstItem.id];
 
     return (
@@ -993,8 +1058,7 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
         >
           <div
             onClick={() => {
-              if (isDrawing) onSelectDrawing(firstItem.id);
-              else onSelectReport(firstItem.id);
+              onSelectReport(firstItem.id);
               if (subFiles.length > 0 && !subOpen) toggleFolder(subKey);
             }}
             className="flex items-center gap-1.5 truncate flex-1 min-w-0 cursor-pointer"
@@ -1004,8 +1068,6 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
               ) : recFirst?.status === 'issue' ? (
                 <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-              ) : isDrawing ? (
-                <FolderGit2 className="w-3.5 h-3.5 text-blue-400" />
               ) : (
                 <FileText className="w-3.5 h-3.5 text-blue-400" />
               )}
@@ -1048,14 +1110,14 @@ const InspectionTreeNavComponent: React.FC<InspectionTreeNavProps> = ({
           <div className="ml-4 pl-2 border-l border-slate-800/80 space-y-0.5 mt-0.5">
             {/* 1. 添付PDFや本文ファイル */}
             {pdfSubFiles.map((item) => {
-              const isSubSelected = isDrawing ? item.id === selectedDrawingId : item.id === selectedReportId;
+              const isSubSelected = item.id === selectedReportId;
               const recSub = inspectionRecords[item.id];
               const role = ('fileRole' in item && item.fileRole) ? item.fileRole : '本文';
 
               return (
                 <button
                   key={item.id}
-                  onClick={() => isDrawing ? onSelectDrawing(item.id) : onSelectReport(item.id)}
+                  onClick={() => onSelectReport(item.id)}
                   style={{ contentVisibility: 'auto', containIntrinsicSize: '24px' }}
                   className={`w-full text-left p-1 rounded flex items-center gap-1.5 transition ${
                     isSubSelected
