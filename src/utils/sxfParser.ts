@@ -373,39 +373,96 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       }
     }
 
-    // --- C. CIRCLE / ARC ---
-    else if (type === 'CIRCLE' || type.includes('CIRCLE') || type.includes('ARC')) {
+    // --- C. CIRCLE / ARC / TRIMMED_CURVE ---
+    else if (
+      type === 'CIRCLE' || 
+      type.endsWith('_CIRCLE') || 
+      type === 'TRIMMED_CURVE' || 
+      type.endsWith('_ARC') ||
+      type === 'COMPOSITE_CURVE_SEGMENT'
+    ) {
       let center: CadPoint | null = null;
-      let radius = 10;
+      let radius: number | null = null;
+      let startAngle = 0;
+      let endAngle = Math.PI * 2;
+      let isArc = false;
 
-      for (const arg of args) {
-        if (arg.startsWith('#')) {
-          center = resolvePoint(arg);
-        } else {
-          const num = parseFloat(arg);
-          if (!isNaN(num) && num > 0) {
+      // TRIMMED_CURVE('', #basis, (#start), (#end), .T., .PARAMETER.); の場合
+      if (type.includes('TRIMMED_CURVE')) {
+        const basisRef = args[1]?.replace(/^#/, '');
+        const basisEnt = basisRef ? entityMap.get(basisRef) : null;
+        if (basisEnt && (basisEnt.type === 'CIRCLE' || basisEnt.type.endsWith('_CIRCLE'))) {
+          const bArgs = parseArgs(basisEnt.rawArgs);
+          center = resolvePoint(bArgs[1] || bArgs[0]);
+          const r = parseFloat(bArgs[2]);
+          if (!isNaN(r) && r > 0 && r < 50000) {
+            radius = r;
+          }
+
+          // トリムパラメータの抽出
+          const p1 = parseFloat(args[2]?.replace(/[()]/g, ''));
+          const p2 = parseFloat(args[3]?.replace(/[()]/g, ''));
+          if (!isNaN(p1) && !isNaN(p2)) {
+            // パラメータがラジアンまたは度数
+            startAngle = p1 > 10 ? (p1 * Math.PI) / 180 : p1;
+            endAngle = p2 > 10 ? (p2 * Math.PI) / 180 : p2;
+            isArc = true;
+          }
+        }
+      } else {
+        // 通常の CIRCLE('', #placement, radius)
+        // args[1] は通常 placement/center, args[2] は radius
+        const pRef = args.find(a => a.startsWith('#'));
+        if (pRef) {
+          center = resolvePoint(pRef);
+        }
+
+        // 半径の取得: 通常は第2または第3引数の正の数値（角度等は拾わない）
+        for (let i = 1; i < args.length; i++) {
+          const num = parseFloat(args[i]);
+          // 有効な半径値（100m以内の現実的なサイズ）
+          if (!isNaN(num) && num > 0.01 && num < 30000) {
             radius = num;
+            // もし後続に開始角・終了角がある場合 (sxf_arc)
+            if (args[i + 1] && args[i + 2]) {
+              const a1 = parseFloat(args[i + 1]);
+              const a2 = parseFloat(args[i + 2]);
+              if (!isNaN(a1) && !isNaN(a2)) {
+                startAngle = (a1 * Math.PI) / 180;
+                endAngle = (a2 * Math.PI) / 180;
+                isArc = true;
+              }
+            }
+            break;
           }
         }
       }
 
-      if (center) {
+      // 有効な中心と半径を持つ円・円弧のみを描画登録（異常な巨大円は排除）
+      if (center && radius !== null && radius > 0.05 && radius < 20000) {
         entities.push({
           type: 'circle',
           center,
           radius,
+          startAngle,
+          endAngle,
+          isArc,
           color: defaultColor,
           layer,
         });
       }
     }
 
-    // --- D. TEXT / TEXT_LITERAL / ANNOTATION_TEXT ---
+    // --- D. TEXT / TEXT_LITERAL / DRAUGHTING_TEXT ---
     else if (
-      type.includes('TEXT') || 
-      type.includes('TEXT_LITERAL') || 
-      type.includes('ANNOTATION_TEXT') ||
-      type === 'DRAUGHTING_TEXT_LITERAL'
+      (type === 'TEXT_LITERAL' ||
+       type === 'TEXT_LITERAL_WITH_EXTENT' ||
+       type === 'DRAUGHTING_TEXT_LITERAL' ||
+       type.endsWith('_TEXT')) &&
+      !type.includes('STYLE') &&
+      !type.includes('FONT') &&
+      !type.includes('TABLE') &&
+      !type.includes('CONTEXT')
     ) {
       let textStr = '';
       let pos: CadPoint | null = null;
@@ -421,10 +478,9 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
             textStr = decoded;
           }
         }
-        // 配置座標の解決 (AXIS2_PLACEMENT または CARTESIAN_POINT)
+        // 配置座標の解決
         else if (arg.startsWith('#') && !pos) {
           pos = resolvePoint(arg);
-          // 角度情報の探索
           const placeEnt = entityMap.get(arg.replace('#', ''));
           if (placeEnt && placeEnt.type.includes('AXIS2_PLACEMENT')) {
             const pArgs = parseArgs(placeEnt.rawArgs);
@@ -441,19 +497,22 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
             }
           }
         }
-        // 文字高さの取得
+        // 文字高さ
         else {
           const num = parseFloat(arg);
-          if (!isNaN(num) && num > 0 && num < 500) {
+          if (!isNaN(num) && num > 0.5 && num < 100) {
             height = num;
           }
         }
       }
 
-      if (textStr && pos) {
+      // CAD内部のシステム定義文字・フォント名ノイズを徹底除外
+      const isSystemNoise = /^(SXF|ISO|CAD|AUTOCAD|STANDARD|KANJI|GOTHIC|MINCHO|DEFAULT|LEVEL|DRAUGHTING|DIMENSION_STYLE|BYLAYER)/i.test(textStr);
+
+      if (textStr && textStr.trim().length > 0 && !isSystemNoise && pos) {
         entities.push({
           type: 'text',
-          text: textStr,
+          text: textStr.trim(),
           position: pos,
           height: height || 3.5,
           angle,
@@ -611,7 +670,12 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
         const sub = bytes.subarray(textStart, i);
         try {
           const str = decoder.decode(sub).trim();
-          if (str.length >= 2 && !/^[\s\d_]+$/.test(str) && !str.includes('')) {
+          if (str.length >= 2 && !/^[\s\d_]+$/.test(str)) {
+            // システムヘッダー・規格識別子の除外
+            if (/^(SXF|ISO|PK|AutoCAD|JACIC|LEVEL|STANDARD|DRAUGHTING|DIMENSION|BYLAYER)/i.test(str)) {
+              textStart = -1;
+              continue;
+            }
             const pos = extractedPoints[entities.length % Math.max(1, extractedPoints.length)] || { x: 50, y: 50 };
             entities.push({
               type: 'text',

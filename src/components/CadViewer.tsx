@@ -212,7 +212,9 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       // --- 円・円弧 ---
       else if (ent.type === 'circle') {
         ctx.beginPath();
-        ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, Math.PI * 2);
+        const start = ent.isArc && ent.startAngle !== undefined ? ent.startAngle : 0;
+        const end = ent.isArc && ent.endAngle !== undefined ? ent.endAngle : Math.PI * 2;
+        ctx.arc(ent.center.x, ent.center.y, ent.radius, start, end);
         ctx.stroke();
       }
       // --- 文字・寸法値 ---
