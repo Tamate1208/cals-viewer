@@ -78,6 +78,7 @@ export interface CadDrawing {
     height: number;
   };
   layers: CadLayerInfo[];
+  textSummary: string[];
   scale?: string;
   title?: string;
   fileName: string;
@@ -502,7 +503,11 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       }
 
       // 有効な中心と半径を持つ円・円弧のみを描画登録
-      if (center && radius !== null && radius > 0.05 && radius < 25000) {
+      // 【安全ガード】全円(!isArc)で半径400mmを超えるものは構造物ではなく誤認パラメータのため除外
+      const isTooBigFullCircle = !isArc && radius !== null && radius > 400;
+      const isTooBigArc = isArc && radius !== null && radius > 50000;
+
+      if (center && radius !== null && radius > 0.05 && !isTooBigFullCircle && !isTooBigArc) {
         entities.push({
           type: 'circle',
           center,
@@ -541,8 +546,8 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         .map(a => decodeStepString(a.slice(1, -1)));
 
       for (const str of strArgs) {
-        // $$$SXF_ で始まる制御文字列（アライメント指定）の解析・分離
-        if (str.startsWith('$$$SXF_') || str.startsWith('SXF_')) {
+        // $$$SXF_ で始まる制御文字列（アライメント指定）の解析・完全分離
+        if (str.startsWith('$$$SXF_') || str.startsWith('SXF_') || str.startsWith('$$$')) {
           const lower = str.toLowerCase();
           if (lower.includes('center')) align = 'center';
           else if (lower.includes('right')) align = 'right';
@@ -553,7 +558,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
           else if (lower.includes('baseline') || lower.includes('bottom')) baseline = 'bottom';
         } else {
           // 本物の本文テキスト
-          if (!textStr && str.trim().length > 0) {
+          if (!textStr && str.trim().length > 0 && !str.includes('$$$')) {
             textStr = str.trim();
           }
         }
@@ -586,8 +591,10 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         }
       }
 
-      // CAD内部のシステム定義文字・フォント名ノイズを徹底除外
-      const isSystemNoise = /^(SXF|ISO|CAD|AUTOCAD|STANDARD|KANJI|GOTHIC|MINCHO|DEFAULT|LEVEL|DRAUGHTING|DIMENSION_STYLE|BYLAYER)/i.test(textStr);
+      // CAD内部のシステム定義文字・フォント名ノイズ・$$$制御文字を徹底除外
+      const isSystemNoise = 
+        /^(SXF|ISO|CAD|AUTOCAD|STANDARD|KANJI|GOTHIC|MINCHO|DEFAULT|LEVEL|DRAUGHTING|DIMENSION_STYLE|BYLAYER)/i.test(textStr) ||
+        textStr.includes('$$$');
 
       if (textStr && textStr.trim().length > 0 && !isSystemNoise && pos) {
         entities.push({
@@ -644,12 +651,25 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     count: stat.count,
   }));
 
+  // 7. 図面内テキスト・注記・寸法値のサマリー抽出（重複除去）
+  const textSummarySet = new Set<string>();
+  for (const ent of entities) {
+    if (ent.type === 'text' && ent.text) {
+      const clean = ent.text.trim();
+      if (clean.length >= 1 && !clean.includes('$$$') && !textSummarySet.has(clean)) {
+        textSummarySet.add(clean);
+      }
+    }
+  }
+  const textSummary = Array.from(textSummarySet);
+
   const bounds = calculateBounds(entities);
 
   return {
     entities,
     bounds,
     layers,
+    textSummary,
     fileName,
     format: 'P21',
   };
@@ -812,12 +832,15 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
     count: stat.count,
   }));
 
+  const textSummary = Array.from(new Set(entities.filter(e => e.type === 'text').map(e => (e as CadText).text.trim()).filter(Boolean)));
+
   const bounds = calculateBounds(entities);
 
   return {
     entities,
     bounds,
     layers,
+    textSummary,
     fileName,
     format: 'SFC',
   };
