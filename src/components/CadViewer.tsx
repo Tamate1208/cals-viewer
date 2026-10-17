@@ -7,7 +7,10 @@ import {
   Layers,
   Compass,
   RotateCw,
-  AlertTriangle
+  AlertTriangle,
+  Check,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { parseP21Text, parseSfcBuffer, type CadDrawing } from '../utils/sxfParser';
 
@@ -129,7 +132,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
 
     const scaleX = availW / bounds.width;
     const scaleY = availH / bounds.height;
-    const k = Math.min(scaleX, scaleY, 5.0); // 最大5倍までに制限
+    const k = Math.min(scaleX, scaleY, 10.0); // 最大10倍
 
     // 中央位置
     const centerX = bounds.minX + bounds.width / 2;
@@ -177,7 +180,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.k, invertY ? -transform.k : transform.k);
 
-    // 図面要素のレンダリング
+    // 線の描画プロパティ
     ctx.lineWidth = Math.max(0.5, 1.2 / transform.k);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -188,12 +191,15 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       ctx.strokeStyle = ent.color || '#38bdf8';
       ctx.fillStyle = ent.color || '#38bdf8';
 
+      // --- 線分 ---
       if (ent.type === 'line') {
         ctx.beginPath();
         ctx.moveTo(ent.p1.x, ent.p1.y);
         ctx.lineTo(ent.p2.x, ent.p2.y);
         ctx.stroke();
-      } else if (ent.type === 'polyline') {
+      }
+      // --- ポリライン ---
+      else if (ent.type === 'polyline') {
         if (ent.points.length < 2) continue;
         ctx.beginPath();
         ctx.moveTo(ent.points[0].x, ent.points[0].y);
@@ -202,18 +208,39 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         }
         if (ent.closed) ctx.closePath();
         ctx.stroke();
-      } else if (ent.type === 'circle') {
+      }
+      // --- 円・円弧 ---
+      else if (ent.type === 'circle') {
         ctx.beginPath();
         ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, Math.PI * 2);
         ctx.stroke();
-      } else if (ent.type === 'text') {
+      }
+      // --- 文字・寸法値 ---
+      else if (ent.type === 'text') {
         ctx.save();
         ctx.translate(ent.position.x, ent.position.y);
-        // 文字列の上下反転を元に戻す
-        if (invertY) ctx.scale(1, -1);
-        const fontSize = Math.max(3, ent.height);
-        ctx.font = `${fontSize}px sans-serif`;
+
+        // 文字の回転
+        if (ent.angle) {
+          ctx.rotate(invertY ? -ent.angle : ent.angle);
+        }
+
+        // 文字列の上下反転を元に戻す（読める向きにする）
+        if (invertY) {
+          ctx.scale(1, -1);
+        }
+
+        // 画面上でのフォントサイズ計算（小さすぎて読めないドット化を防止）
+        const rawHeight = ent.height || 4.0;
+        // 画面上で最低 8px 相当の視認性を確保
+        const screenPx = rawHeight * transform.k;
+        const renderHeight = screenPx < 7 ? 7 / transform.k : rawHeight;
+
+        ctx.font = `${renderHeight}px "Yu Gothic", "Meiryo", sans-serif`;
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = ent.color || '#f8fafc';
         ctx.fillText(ent.text, 0, 0);
+
         ctx.restore();
       }
     }
@@ -236,7 +263,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
 
   // 4. マウス操作（パン & ズーム）
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0 && e.button !== 1) return; // 左クリックまたは中クリック
+    if (e.button !== 0 && e.button !== 1) return;
     isDraggingRef.current = true;
     dragStartRef.current = { x: e.clientX, y: e.clientY };
   };
@@ -270,9 +297,8 @@ export const CadViewer: React.FC<CadViewerProps> = ({
 
     const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
     const currentK = transformRef.current.k;
-    const newK = Math.min(Math.max(currentK * zoomFactor, 0.005), 100);
+    const newK = Math.min(Math.max(currentK * zoomFactor, 0.001), 100);
 
-    // マウス位置を中心にスケーリング
     const newX = mouseX - (mouseX - transformRef.current.x) * (newK / currentK);
     const newY = mouseY - (mouseY - transformRef.current.y) * (newK / currentK);
 
@@ -288,7 +314,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
     const mouseY = ch / 2;
 
     const currentK = transform.k;
-    const newK = Math.min(Math.max(currentK * factor, 0.005), 100);
+    const newK = Math.min(Math.max(currentK * factor, 0.001), 100);
     const newX = mouseX - (mouseX - transform.x) * (newK / currentK);
     const newY = mouseY - (mouseY - transform.y) * (newK / currentK);
 
@@ -303,6 +329,17 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       else next.add(layerName);
       return next;
     });
+  };
+
+  // 全レイヤー表示
+  const handleShowAllLayers = () => {
+    setHiddenLayers(new Set());
+  };
+
+  // 全レイヤー非表示
+  const handleHideAllLayers = () => {
+    if (!drawing) return;
+    setHiddenLayers(new Set(drawing.layers.map(l => l.name)));
   };
 
   return (
@@ -327,7 +364,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-white truncate max-w-[240px] sm:max-w-md">
+              <span className="text-xs font-bold text-white truncate max-w-[200px] sm:max-w-md">
                 {title}
               </span>
               <span className="text-[10px] font-mono px-1.5 py-0.2 bg-blue-900/60 text-blue-300 border border-blue-500/40 rounded shrink-0">
@@ -339,7 +376,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
               {drawingScale && <span className="text-slate-500 font-mono">縮尺: {drawingScale}</span>}
               {drawing && (
                 <span className="text-slate-500 hidden sm:inline">
-                  (要素数: {drawing.entities.length.toLocaleString()})
+                  (要素: {drawing.entities.length.toLocaleString()} / 画層: {drawing.layers.length})
                 </span>
               )}
             </div>
@@ -348,7 +385,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
 
         {/* 右側: ビュー操作ツールバー */}
         <div className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 p-1 rounded-xl shadow-lg pointer-events-auto">
-          {/* レイヤー切替 */}
+          {/* 画層（レイヤー）切替ドロップダウン */}
           {drawing && drawing.layers.length > 0 && (
             <div className="relative">
               <button
@@ -361,29 +398,67 @@ export const CadViewer: React.FC<CadViewerProps> = ({
                 title="レイヤー表示切替"
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span className="hidden md:inline text-[11px]">画層</span>
+                <span className="hidden md:inline text-[11px]">画層 ({drawing.layers.length})</span>
               </button>
 
               {showLayerMenu && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 text-xs max-h-60 overflow-y-auto">
-                  <div className="font-bold text-[11px] text-slate-400 mb-1 px-1">レイヤー表示/非表示</div>
-                  {drawing.layers.map(layer => {
-                    const isVisible = !hiddenLayers.has(layer);
-                    return (
-                      <label
-                        key={layer}
-                        className="flex items-center gap-2 p-1.5 hover:bg-slate-800 rounded cursor-pointer text-slate-200"
+                <div className="absolute right-0 top-full mt-2 w-64 bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-xl shadow-2xl p-2.5 z-50 text-xs max-h-72 overflow-y-auto">
+                  <div className="flex items-center justify-between font-bold text-[11px] text-slate-400 mb-2 px-1 border-b border-slate-800 pb-1.5">
+                    <span>画層（レイヤー）一覧</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleShowAllLayers}
+                        className="px-1.5 py-0.5 hover:bg-slate-800 text-blue-400 hover:text-blue-300 rounded text-[10px] flex items-center gap-0.5"
+                        title="全画層を表示"
                       >
-                        <input
-                          type="checkbox"
-                          checked={isVisible}
-                          onChange={() => toggleLayer(layer)}
-                          className="rounded border-slate-700 text-blue-600 focus:ring-0"
-                        />
-                        <span className="truncate text-[11px]">{layer}</span>
-                      </label>
-                    );
-                  })}
+                        <Eye className="w-3 h-3" />
+                        <span>全表示</span>
+                      </button>
+                      <button
+                        onClick={handleHideAllLayers}
+                        className="px-1.5 py-0.5 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded text-[10px] flex items-center gap-0.5"
+                        title="全画層を非表示"
+                      >
+                        <EyeOff className="w-3 h-3" />
+                        <span>全解除</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    {drawing.layers.map(layer => {
+                      const isVisible = !hiddenLayers.has(layer.name);
+                      return (
+                        <div
+                          key={layer.name}
+                          onClick={() => toggleLayer(layer.name)}
+                          className={`flex items-center justify-between p-1.5 rounded cursor-pointer transition select-none ${
+                            isVisible ? 'hover:bg-slate-800 text-slate-200' : 'hover:bg-slate-800/60 text-slate-500 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                            {/* チェックマーク */}
+                            <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                              isVisible ? 'bg-blue-600 border-blue-500 text-white' : 'border-slate-600 bg-slate-800'
+                            }`}>
+                              {isVisible && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                            </div>
+                            {/* カラーバッジ */}
+                            <div
+                              className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/40"
+                              style={{ backgroundColor: layer.color }}
+                            />
+                            {/* レイヤー名 */}
+                            <span className="truncate text-[11px]">{layer.name}</span>
+                          </div>
+                          {/* 要素数カウント */}
+                          <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                            {layer.count}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

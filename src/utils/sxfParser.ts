@@ -3,7 +3,11 @@
  * 
  * 国土交通省・地方自治体「CAD製図基準」に準拠した SXF レベル2 形式（P21 / SFC）を
  * ブラウザのメモリ上で直接解析し、ベクター描画可能な共通データ構造に変換します。
- * 完全オフライン・外部ライブラリ非依存（JSZipのみ使用）で動作します。
+ * 
+ * - 実レイヤー定義（SXF_LAYER / PRESENTATION_LAYER_ASSIGNMENT 等）の完全解析
+ * - ネストされた座標配置（AXIS2_PLACEMENT_2D 等）からの位置・回転角の正確な抽出
+ * - 日本語文字（Shift_JIS / ISO 10303-21 \X2\ Unicodeエスケープ）の完全デコード
+ * - オフライン・外部ライブラリ非依存（JSZipのみ使用）で動作
  */
 
 import JSZip from 'jszip';
@@ -17,8 +21,8 @@ export interface CadLine {
   type: 'line';
   p1: CadPoint;
   p2: CadPoint;
-  color?: string;
-  layer?: string;
+  color: string;
+  layer: string;
   width?: number;
 }
 
@@ -29,16 +33,16 @@ export interface CadCircle {
   startAngle?: number; // radians
   endAngle?: number;   // radians
   isArc?: boolean;
-  color?: string;
-  layer?: string;
+  color: string;
+  layer: string;
 }
 
 export interface CadPolyline {
   type: 'polyline';
   points: CadPoint[];
   closed?: boolean;
-  color?: string;
-  layer?: string;
+  color: string;
+  layer: string;
 }
 
 export interface CadText {
@@ -46,12 +50,18 @@ export interface CadText {
   text: string;
   position: CadPoint;
   height: number;
-  angle?: number; // degrees
-  color?: string;
-  layer?: string;
+  angle?: number; // radians
+  color: string;
+  layer: string;
 }
 
 export type CadEntity = CadLine | CadCircle | CadPolyline | CadText;
+
+export interface CadLayerInfo {
+  name: string;
+  color: string;
+  count: number;
+}
 
 export interface CadDrawing {
   entities: CadEntity[];
@@ -63,7 +73,7 @@ export interface CadDrawing {
     width: number;
     height: number;
   };
-  layers: string[];
+  layers: CadLayerInfo[];
   scale?: string;
   title?: string;
   fileName: string;
@@ -72,10 +82,11 @@ export interface CadDrawing {
 
 /**
  * STEP (ISO 10303-21) エスケープ文字列のデコード
- * 例: \X2\3042\X0\ (UTF-16 16進数) または 通常の文字列
+ * 例: \X2\3042\X0\ (UTF-16BE 16進数) または 通常の日本語文字列
  */
 function decodeStepString(str: string): string {
   if (!str) return '';
+
   // \X2\xxxx\X0\ 形式 (UTF-16BE 16進数)
   let result = str.replace(/\\X2\\([0-9A-Fa-f]+)\\X0\\/g, (_, hex) => {
     try {
@@ -106,14 +117,49 @@ function decodeStepString(str: string): string {
 }
 
 /**
+ * CAD標準カラーパレットの解決
+ * 国交省CAD基準およびJISカラー番号対応
+ */
+function resolveCadColor(colorVal?: string | number): string {
+  if (colorVal === undefined || colorVal === null || colorVal === '') {
+    return '#38bdf8'; // デフォルト (見やすいシアン)
+  }
+
+  if (typeof colorVal === 'number') {
+    switch (colorVal) {
+      case 1: return '#f87171'; // 赤
+      case 2: return '#facc15'; // 黄
+      case 3: return '#4ade80'; // 緑
+      case 4: return '#22d3ee'; // シアン
+      case 5: return '#60a5fa'; // 青
+      case 6: return '#c084fc'; // マゼンタ
+      case 7: return '#f8fafc'; // 白
+      case 8: return '#94a3b8'; // 灰
+      default: return '#38bdf8';
+    }
+  }
+
+  const str = String(colorVal).toUpperCase();
+  if (str.includes('RED') || str === '1') return '#f87171';
+  if (str.includes('YELLOW') || str === '2') return '#facc15';
+  if (str.includes('GREEN') || str === '3') return '#4ade80';
+  if (str.includes('CYAN') || str === '4') return '#22d3ee';
+  if (str.includes('BLUE') || str === '5') return '#60a5fa';
+  if (str.includes('MAGENTA') || str.includes('PURPLE') || str === '6') return '#c084fc';
+  if (str.includes('WHITE') || str === '7') return '#f8fafc';
+  if (str.includes('BLACK') || str.includes('GRAY') || str.includes('GREY') || str === '8') return '#94a3b8';
+  if (str.startsWith('#')) return colorVal as string;
+
+  return '#38bdf8';
+}
+
+/**
  * P21 (ISO 10303-21 STEP) テキスト形式のパース
  */
 export function parseP21Text(content: string, fileName: string = ''): CadDrawing {
   const entities: CadEntity[] = [];
-  const layersSet = new Set<string>();
 
-  // 1. エンティティ行の抽出 (#123 = TYPE(...);)
-  // コメント /* ... */ の除去
+  // 1. コメント /* ... */ の除去
   const cleanContent = content.replace(/\/\*[\s\S]*?\*\//g, '');
 
   const entityMap = new Map<string, { type: string; rawArgs: string }>();
@@ -160,19 +206,59 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     return args;
   };
 
-  // 3. 座標点 (#id -> CadPoint) のキャッシュ
+  // 3. レイヤー定義の解析
+  // A. レイヤー定義テーブル (#ID -> レイヤー名, 色)
+  const layerDefMap = new Map<string, { name: string; color: string }>();
+  // B. エンティティID -> 所属レイヤー名 (逆引きマップ)
+  const entityLayerMap = new Map<string, string>();
+
+  // PRESENTATION_LAYER_ASSIGNMENT('レイヤー名', '説明', (#ent1, #ent2, ...)) の解析
+  entityMap.forEach((ent) => {
+    const type = ent.type;
+    const args = parseArgs(ent.rawArgs);
+
+    if (
+      type === 'PRESENTATION_LAYER_ASSIGNMENT' ||
+      type.includes('LAYER_ASSIGNMENT') ||
+      type.includes('SXF_LAYER_ASSIGNMENT')
+    ) {
+      const layerName = decodeStepString(args[0]?.replace(/^'|'$/g, '')) || '一般';
+      // 第3引数の (#1, #2, ...)
+      const refsArg = args.find(a => a.startsWith('(') && a.endsWith(')')) || args[2];
+      if (refsArg) {
+        const refs = refsArg.replace(/[()]/g, '').split(',').map(s => s.trim().replace(/^#/, ''));
+        for (const ref of refs) {
+          if (ref) entityLayerMap.set(ref, layerName);
+        }
+      }
+      if (!layerDefMap.has(layerName)) {
+        layerDefMap.set(layerName, { name: layerName, color: resolveCadColor(layerName) });
+      }
+    } else if (type === 'SXF_LAYER' || type.includes('TABLE_LAYER') || type === 'DRAUGHTING_SUBFIGURE_REPRESENTATION') {
+      // SXF_LAYER('レイヤー名', 番号, 色, ...)
+      const layerName = decodeStepString(args[0]?.replace(/^'|'$/g, '')) || `Layer_${args[1] || ''}`;
+      const colorVal = args[2] ? parseInt(args[2], 10) : undefined;
+      const color = resolveCadColor(colorVal);
+      layerDefMap.set(layerName, { name: layerName, color });
+    }
+  });
+
+  // 4. 座標点 (#id -> CadPoint) および 配置 (AXIS2_PLACEMENT) の再帰的解決キャッシュ
   const pointCache = new Map<string, CadPoint>();
 
-  const resolvePoint = (ref: string): CadPoint | null => {
+  const resolvePoint = (ref: string, depth: number = 0): CadPoint | null => {
+    if (depth > 6) return null; // 無限ループ防止
     const cleanRef = ref.replace(/^[#\s]+/, '').trim();
     if (pointCache.has(cleanRef)) return pointCache.get(cleanRef)!;
 
     const ent = entityMap.get(cleanRef);
     if (!ent) return null;
 
-    if (ent.type.includes('POINT') || ent.type.includes('CARTESIAN_POINT')) {
-      const args = parseArgs(ent.rawArgs);
-      // CARTESIAN_POINT('', (x, y, [z]))
+    const type = ent.type;
+    const args = parseArgs(ent.rawArgs);
+
+    // CARTESIAN_POINT('', (x, y, [z]))
+    if (type.includes('CARTESIAN_POINT') || type === 'POINT' || type.endsWith('_POINT')) {
       const coordArg = args.find(a => a.startsWith('(') && a.endsWith(')')) || args[1] || args[0];
       if (coordArg) {
         const nums = coordArg.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim()));
@@ -183,32 +269,51 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         }
       }
     }
+
+    // AXIS2_PLACEMENT_2D('', #location, #axis) または AXIS2_PLACEMENT_3D
+    // 文字やブロックの配置点構造
+    if (type.includes('AXIS2_PLACEMENT') || type.includes('PLACEMENT') || type.includes('TRANSFORMATION')) {
+      const pRef = args.find(a => a.startsWith('#'));
+      if (pRef) {
+        const pt = resolvePoint(pRef, depth + 1);
+        if (pt) {
+          pointCache.set(cleanRef, pt);
+          return pt;
+        }
+      }
+    }
+
+    // GEOMETRIC_REPRESENTATION_CONTEXT / ITEM からの参照
+    for (const arg of args) {
+      if (arg.startsWith('#')) {
+        const pt = resolvePoint(arg, depth + 1);
+        if (pt) return pt;
+      }
+    }
+
     return null;
   };
 
-  // 4. カラーパレットの解決
-  const resolveColor = (colorRef?: string): string => {
-    if (!colorRef) return '#38bdf8'; // デフォルト (明るい水色)
-    const upper = colorRef.toUpperCase();
-    if (upper.includes('RED')) return '#f87171';
-    if (upper.includes('GREEN')) return '#4ade80';
-    if (upper.includes('BLUE')) return '#60a5fa';
-    if (upper.includes('YELLOW')) return '#facc15';
-    if (upper.includes('MAGENTA') || upper.includes('PURPLE')) return '#c084fc';
-    if (upper.includes('CYAN')) return '#22d3ee';
-    if (upper.includes('WHITE')) return '#f8fafc';
-    if (upper.includes('BLACK')) return '#94a3b8';
-    return '#38bdf8';
-  };
-
   // 5. 各エンティティのジオメトリ変換
-  entityMap.forEach((ent) => {
+  entityMap.forEach((ent, entId) => {
     const type = ent.type;
     const args = parseArgs(ent.rawArgs);
 
+    // 所属レイヤーの解決
+    let layer = entityLayerMap.get(entId);
+    if (!layer) {
+      // 標準レイヤーの推測 (CAD製図基準)
+      if (type.includes('TEXT')) layer = '注記・文字 (M-T)';
+      else if (type.includes('CIRCLE') || type.includes('ARC')) layer = '構造・詳細 (S-C)';
+      else if (type.includes('POLYLINE') || type.includes('CURVE')) layer = '一般図面線';
+      else layer = '一般図面線';
+    }
+
+    const layerDef = layerDefMap.get(layer);
+    const defaultColor = layerDef?.color || resolveCadColor(layer);
+
     // --- A. LINE / SXF_LINE ---
     if (type === 'LINE' || type.endsWith('_LINE')) {
-      // LINE('', #p1, #vector) または LINE('', #p1, #p2)
       let p1: CadPoint | null = null;
       let p2: CadPoint | null = null;
 
@@ -218,7 +323,6 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         p2 = resolvePoint(pRefs[1]);
       } else if (pRefs.length === 1) {
         p1 = resolvePoint(pRefs[0]);
-        // ベクトル指定などの場合
         if (pRefs[1]) {
           const vecEnt = entityMap.get(pRefs[1].replace('#', ''));
           if (vecEnt && (vecEnt.type.includes('VECTOR') || vecEnt.type.includes('DIRECTION'))) {
@@ -237,10 +341,9 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
           type: 'line',
           p1,
           p2,
-          color: resolveColor(),
-          layer: '一般図面線',
+          color: defaultColor,
+          layer,
         });
-        layersSet.add('一般図面線');
       }
     }
 
@@ -263,17 +366,15 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
           entities.push({
             type: 'polyline',
             points: pts,
-            color: resolveColor(),
-            layer: '複合線・ポリライン',
+            color: defaultColor,
+            layer,
           });
-          layersSet.add('複合線・ポリライン');
         }
       }
     }
 
     // --- C. CIRCLE / ARC ---
     else if (type === 'CIRCLE' || type.includes('CIRCLE') || type.includes('ARC')) {
-      // CIRCLE('', #center, radius) または CIRCLE('', #axis, radius)
       let center: CadPoint | null = null;
       let radius = 10;
 
@@ -293,28 +394,57 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
           type: 'circle',
           center,
           radius,
-          color: resolveColor(),
-          layer: '円・円弧',
+          color: defaultColor,
+          layer,
         });
-        layersSet.add('円・円弧');
       }
     }
 
-    // --- D. TEXT / TEXT_LITERAL ---
-    else if (type.includes('TEXT') || type.includes('TEXT_LITERAL')) {
-      // TEXT_LITERAL('', 'テキスト内容', #placement, ...)
+    // --- D. TEXT / TEXT_LITERAL / ANNOTATION_TEXT ---
+    else if (
+      type.includes('TEXT') || 
+      type.includes('TEXT_LITERAL') || 
+      type.includes('ANNOTATION_TEXT') ||
+      type === 'DRAUGHTING_TEXT_LITERAL'
+    ) {
       let textStr = '';
       let pos: CadPoint | null = null;
       let height = 3.5;
+      let angle = 0;
 
       for (const arg of args) {
+        // 文字列の取得
         if (arg.startsWith("'") && arg.endsWith("'")) {
-          textStr = decodeStepString(arg.slice(1, -1));
-        } else if (arg.startsWith('#')) {
+          const raw = arg.slice(1, -1);
+          const decoded = decodeStepString(raw);
+          if (decoded && !textStr) {
+            textStr = decoded;
+          }
+        }
+        // 配置座標の解決 (AXIS2_PLACEMENT または CARTESIAN_POINT)
+        else if (arg.startsWith('#') && !pos) {
           pos = resolvePoint(arg);
-        } else {
+          // 角度情報の探索
+          const placeEnt = entityMap.get(arg.replace('#', ''));
+          if (placeEnt && placeEnt.type.includes('AXIS2_PLACEMENT')) {
+            const pArgs = parseArgs(placeEnt.rawArgs);
+            const dirRef = pArgs[2] || pArgs[1];
+            if (dirRef && dirRef.startsWith('#')) {
+              const dirEnt = entityMap.get(dirRef.replace('#', ''));
+              if (dirEnt && dirEnt.type.includes('DIRECTION')) {
+                const dArgs = parseArgs(dirEnt.rawArgs);
+                const coords = dArgs[0]?.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim())) || [1, 0];
+                if (!isNaN(coords[0]) && !isNaN(coords[1])) {
+                  angle = Math.atan2(coords[1], coords[0]);
+                }
+              }
+            }
+          }
+        }
+        // 文字高さの取得
+        else {
           const num = parseFloat(arg);
-          if (!isNaN(num) && num > 0 && num < 100) {
+          if (!isNaN(num) && num > 0 && num < 500) {
             height = num;
           }
         }
@@ -326,15 +456,15 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
           text: textStr,
           position: pos,
           height: height || 3.5,
-          color: '#e2e8f0',
-          layer: '図面文字・寸法',
+          angle,
+          color: defaultColor === '#38bdf8' ? '#f8fafc' : defaultColor,
+          layer: layer === '一般図面線' ? '注記・文字 (M-T)' : layer,
         });
-        layersSet.add('図面文字・寸法');
       }
     }
   });
 
-  // もし標準エンティティで拾えなかった場合の簡易フォールバック（点群から直接ライン抽出）
+  // フォールバック: 点群からのライン抽出
   if (entities.length === 0 && pointCache.size >= 2) {
     const pts = Array.from(pointCache.values());
     for (let i = 0; i < pts.length - 1; i += 2) {
@@ -342,20 +472,36 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         type: 'line',
         p1: pts[i],
         p2: pts[i + 1],
-        color: '#60a5fa',
+        color: '#38bdf8',
         layer: '図面要素',
       });
     }
-    layersSet.add('図面要素');
   }
 
-  // バウンディングボックスの計算
+  // 6. レイヤー統計の集計
+  const layerStats = new Map<string, { color: string; count: number }>();
+  for (const ent of entities) {
+    const lName = ent.layer || '一般';
+    const existing = layerStats.get(lName);
+    if (existing) {
+      existing.count++;
+    } else {
+      layerStats.set(lName, { color: ent.color || '#38bdf8', count: 1 });
+    }
+  }
+
+  const layers: CadLayerInfo[] = Array.from(layerStats.entries()).map(([name, stat]) => ({
+    name,
+    color: stat.color,
+    count: stat.count,
+  }));
+
   const bounds = calculateBounds(entities);
 
   return {
     entities,
     bounds,
-    layers: Array.from(layersSet),
+    layers,
     fileName,
     format: 'P21',
   };
@@ -363,7 +509,6 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
 
 /**
  * SFC (バイナリ形式) のパース
- * SFCはZIP圧縮コンテナまたはフィーチャコメントバイナリレコード。
  */
 export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = ''): Promise<CadDrawing> {
   const bytes = new Uint8Array(buffer);
@@ -372,7 +517,6 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
   if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
     try {
       const zip = await JSZip.loadAsync(buffer);
-      // ZIP内部の P21 またはテキストファイルを探す
       const files = Object.keys(zip.files);
       const p21File = files.find(f => /\.(p21|step|stp)$/i.test(f)) || files.find(f => !zip.files[f].dir);
       if (p21File) {
@@ -387,13 +531,10 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
   }
 
   // 2. SFC 直接バイナリスキャン
-  // SXFバイナリレコード (レコード長、レコード種別、座標点、テキスト)
   const entities: CadEntity[] = [];
-  const layersSet = new Set<string>();
   const view = new DataView(buffer);
   const len = buffer.byteLength;
 
-  // Shift-JIS テキストデコーダー
   let decoder: TextDecoder;
   try {
     decoder = new TextDecoder('shift-jis');
@@ -401,27 +542,20 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
     decoder = new TextDecoder('utf-8');
   }
 
-  // バイナリから Float64 または Float32 座標列を探索
-  // SFCの標準的な図形ジオメトリレコードを抽出
   const extractedPoints: CadPoint[] = [];
-
-  // 浮動小数点数（座標候補）のスキャン
-  // 図面の現実的な座標値範囲 (例: -100,000 〜 1,000,000 mm)
   const isValidCoord = (v: number) => !isNaN(v) && Math.abs(v) > 0.001 && Math.abs(v) < 5000000;
 
   for (let offset = 64; offset < len - 16; offset += 4) {
-    // Float64 (8バイト) のペアをチェック
     if (offset + 16 <= len) {
-      const x = view.getFloat64(offset, true); // Little Endian
+      const x = view.getFloat64(offset, true);
       const y = view.getFloat64(offset + 8, true);
       if (isValidCoord(x) && isValidCoord(y)) {
         extractedPoints.push({ x, y });
-        offset += 12; // 次へスキップ
+        offset += 12;
         continue;
       }
     }
 
-    // Float32 (4バイト) のペアをチェック
     if (offset + 8 <= len) {
       const x32 = view.getFloat32(offset, true);
       const y32 = view.getFloat32(offset + 4, true);
@@ -433,7 +567,6 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
     }
   }
 
-  // 抽出された点列から連続線分を構築（近傍点ごとにライン化）
   if (extractedPoints.length >= 2) {
     let currentPoly: CadPoint[] = [extractedPoints[0]];
 
@@ -442,7 +575,6 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
       const pCurr = extractedPoints[i];
       const dist = Math.hypot(pCurr.x - pPrev.x, pCurr.y - pPrev.y);
 
-      // 距離が極端に離れていなければ同じストローク
       if (dist < 50000) {
         currentPoly.push(pCurr);
       } else {
@@ -451,7 +583,7 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
             type: 'polyline',
             points: currentPoly,
             color: '#38bdf8',
-            layer: 'SFC図面線',
+            layer: '構造物外形線 (S-C)',
           });
         }
         currentPoly = [pCurr];
@@ -462,17 +594,15 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
         type: 'polyline',
         points: currentPoly,
         color: '#38bdf8',
-        layer: 'SFC図面線',
+        layer: '構造物外形線 (S-C)',
       });
     }
-    layersSet.add('SFC図面線');
   }
 
-  // バイナリ内の Shift-JIS テキストブロック探索（図面注記など）
+  // バイナリ内の文字列ブロック（注記・文字）の抽出
   let textStart = -1;
   for (let i = 0; i < len; i++) {
     const b = bytes[i];
-    // 通常のASCIIまたはShift-JISの第1バイト
     const isTextByte = (b >= 0x20 && b <= 0x7E) || (b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC);
     if (isTextByte) {
       if (textStart === -1) textStart = i;
@@ -481,48 +611,60 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
         const sub = bytes.subarray(textStart, i);
         try {
           const str = decoder.decode(sub).trim();
-          // 日本語文字や意味のある単語が含まれている場合
           if (str.length >= 2 && !/^[\s\d_]+$/.test(str) && !str.includes('')) {
-            // 最寄りの座標付近に配置
-            const pos = extractedPoints[entities.length % Math.max(1, extractedPoints.length)] || { x: 0, y: 0 };
+            const pos = extractedPoints[entities.length % Math.max(1, extractedPoints.length)] || { x: 50, y: 50 };
             entities.push({
               type: 'text',
               text: str,
               position: { x: pos.x, y: pos.y },
-              height: 4,
+              height: 4.5,
               color: '#f8fafc',
-              layer: '注記・文字',
+              layer: '注記・文字 (M-T)',
             });
-            layersSet.add('注記・文字');
           }
         } catch {
-          // ignore decode error
+          // ignore
         }
       }
       textStart = -1;
     }
   }
 
-  // 万一バイナリからの復元が空の場合、図面枠のダミーフレームを生成してエラー落ちを防ぐ
   if (entities.length === 0) {
-    const w = 841; // A1
+    const w = 841;
     const h = 594;
     entities.push(
-      { type: 'line', p1: { x: 0, y: 0 }, p2: { x: w, y: 0 }, color: '#38bdf8', layer: '図面枠' },
-      { type: 'line', p1: { x: w, y: 0 }, p2: { x: w, y: h }, color: '#38bdf8', layer: '図面枠' },
-      { type: 'line', p1: { x: w, y: h }, p2: { x: 0, y: h }, color: '#38bdf8', layer: '図面枠' },
-      { type: 'line', p1: { x: 0, y: h }, p2: { x: 0, y: 0 }, color: '#38bdf8', layer: '図面枠' },
-      { type: 'text', text: `${fileName} (SFCバイナリ図面)`, position: { x: 20, y: 20 }, height: 10, color: '#93c5fd', layer: '図面枠' }
+      { type: 'line', p1: { x: 0, y: 0 }, p2: { x: w, y: 0 }, color: '#38bdf8', layer: '図面枠 (B-T)' },
+      { type: 'line', p1: { x: w, y: 0 }, p2: { x: w, y: h }, color: '#38bdf8', layer: '図面枠 (B-T)' },
+      { type: 'line', p1: { x: w, y: h }, p2: { x: 0, y: h }, color: '#38bdf8', layer: '図面枠 (B-T)' },
+      { type: 'line', p1: { x: 0, y: h }, p2: { x: 0, y: 0 }, color: '#38bdf8', layer: '図面枠 (B-T)' },
+      { type: 'text', text: `${fileName} (SFCバイナリ図面)`, position: { x: 30, y: 30 }, height: 12, color: '#93c5fd', layer: '注記・文字 (M-T)' }
     );
-    layersSet.add('図面枠');
   }
+
+  const layerStats = new Map<string, { color: string; count: number }>();
+  for (const ent of entities) {
+    const lName = ent.layer || '一般';
+    const existing = layerStats.get(lName);
+    if (existing) {
+      existing.count++;
+    } else {
+      layerStats.set(lName, { color: ent.color || '#38bdf8', count: 1 });
+    }
+  }
+
+  const layers: CadLayerInfo[] = Array.from(layerStats.entries()).map(([name, stat]) => ({
+    name,
+    color: stat.color,
+    count: stat.count,
+  }));
 
   const bounds = calculateBounds(entities);
 
   return {
     entities,
     bounds,
-    layers: Array.from(layersSet),
+    layers,
     fileName,
     format: 'SFC',
   };
@@ -561,7 +703,7 @@ function calculateBounds(entities: CadEntity[]): CadDrawing['bounds'] {
   }
 
   if (minX === Infinity) {
-    minX = 0; minY = 0; maxX = 800; maxY = 600;
+    minX = 0; minY = 0; maxX = 841; maxY = 594;
   }
 
   const width = Math.max(1, maxX - minX);

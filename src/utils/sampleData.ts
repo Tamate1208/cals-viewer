@@ -229,6 +229,13 @@ DATA;
 #164=CARTESIAN_POINT('',(110.0,190.0));
 #165=TEXT_LITERAL('','VPφ75 水抜き管',#164,4.0);
 
+/* レイヤー（画層）定義テーブル (CAD製図基準準拠) */
+#200=PRESENTATION_LAYER_ASSIGNMENT('図面枠 (B-T)','外枠および表題欄',(#5,#6,#7,#8,#14,#15,#16,#17,#23,#24));
+#201=PRESENTATION_LAYER_ASSIGNMENT('構造物外形 (S-C)','車道および構造物線',(#105,#106,#107,#108,#124,#125,#126,#127,#161,#163));
+#202=PRESENTATION_LAYER_ASSIGNMENT('中心線 (C-C)','道路中心線CL',(#112));
+#203=PRESENTATION_LAYER_ASSIGNMENT('寸法線 (D-L)','横断寸法線',(#132,#142,#152));
+#204=PRESENTATION_LAYER_ASSIGNMENT('注記・文字 (M-T)','図面注記および文字',(#31,#33,#35,#114,#134,#144,#154,#165));
+
 ENDSEC;
 END-ISO-10303-21;
 `.trim();
