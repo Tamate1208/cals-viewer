@@ -150,18 +150,21 @@ export function extractCleanCadText(rawStr: string): {
   else if (lower.includes('top')) baseline = 'top';
   else if (lower.includes('baseline') || lower.includes('bottom')) baseline = 'bottom';
 
-  // 3. $$$SXF_... または $$$... または SXF_... の制御文字列をピンポイントで完全除去
+  // 3. $$SXF_... / $$$SXF_... / $SXF_... または SXF_... の制御文字列をピンポイントで完全除去
   const cleaned = str
-    .replace(/\${3}SXF_[a-zA-Z0-9_\-\s]+/gi, '')
-    .replace(/\${3}[a-zA-Z0-9_\-\s]+/gi, '')
-    .replace(/^SXF_[a-zA-Z0-9_\-\s]+/gi, '')
+    .replace(/\$+[a-zA-Z0-9_\-\s]*sxf[a-zA-Z0-9_\-\s]*/gi, '')
+    .replace(/^sxf_[a-zA-Z0-9_\-\s]+/gi, '')
+    .replace(/\$+[a-zA-Z0-9_\-\s]+/gi, '')
+    .replace(/^(baseline|centre|center|left|right|top|bottom|middleline)\s*(baseline|centre|center|left|right|top|bottom)?$/gi, '')
     .trim();
 
-  // 4. CAD内部のシステム定義文字・フォント名ノイズを徹底除外
+  // 4. CAD内部のシステム定義文字・フォント名ノイズ・制御コード残余を徹底除外
   const isSystemNoise =
-    /^(SXF|ISO|CAD|AUTOCAD|STANDARD|KANJI|GOTHIC|MINCHO|DEFAULT|LEVEL|DRAUGHTING|DIMENSION_STYLE|BYLAYER)/i.test(cleaned) ||
-    cleaned.includes('$$$') ||
-    cleaned.includes('＄＄＄');
+    /^(\$*sxf|sxf|iso|cad|autocad|standard|kanji|gothic|mincho|default|level|draughting|dimension_style|bylayer)/i.test(cleaned) ||
+    /^(baseline|centre|center|left|right|top|bottom|middleline)$/i.test(cleaned) ||
+    cleaned.includes('$') ||
+    cleaned.includes('＄') ||
+    /^[0-9]+_[0-9]+_[0-9]+$/.test(cleaned);
 
   return {
     text: cleaned,
@@ -349,7 +352,189 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     return subEntities;
   };
 
-  // 5. 座標点 (#id -> CadPoint) および 配置 (AXIS2_PLACEMENT) の再帰的解決キャッシュ
+  // 5. SXF 部分図マッピング（MAPPED_ITEM / SYMBOL_TARGET）と用紙（SHEET）配置階層の解析
+  interface AffineMatrix {
+    a: number;  // scaleX * cos
+    b: number;  // scaleX * sin
+    c: number;  // -scaleY * sin
+    d: number;  // scaleY * cos
+    tx: number; // originX
+    ty: number; // originY
+  }
+
+  const multiplyMatrix = (m1: AffineMatrix, m2: AffineMatrix): AffineMatrix => ({
+    a: m1.a * m2.a + m1.c * m2.b,
+    b: m1.b * m2.a + m1.d * m2.b,
+    c: m1.a * m2.c + m1.c * m2.d,
+    d: m1.b * m2.c + m1.d * m2.d,
+    tx: m1.a * m2.tx + m1.c * m2.ty + m1.tx,
+    ty: m1.b * m2.tx + m1.d * m2.ty + m1.ty,
+  });
+
+  const transformCadPoint = (p: CadPoint, mat: AffineMatrix): CadPoint => ({
+    x: mat.a * p.x + mat.c * p.y + mat.tx,
+    y: mat.b * p.x + mat.d * p.y + mat.ty,
+  });
+
+  interface MappedItemDef {
+    subfigureRef: string;
+    scaleX: number;
+    scaleY: number;
+    originX: number;
+    originY: number;
+    angle: number;
+  }
+  const mappedItemDefMap = new Map<string, MappedItemDef>();
+
+  entityMap.forEach((ent, entId) => {
+    const subList = ent.type === 'COMPLEX' ? decomposeComplexEntity(ent.rawArgs) : [ent];
+    for (const sub of subList) {
+      if (sub.type === 'MAPPED_ITEM') {
+        const args = parseArgs(sub.rawArgs);
+        const mapSourceRef = args[0]?.replace(/^#/, '');
+        const mapTargetRef = args[1]?.replace(/^#/, '');
+        const sourceEnt = entityMap.get(mapSourceRef);
+        const targetEnt = entityMap.get(mapTargetRef);
+        if (sourceEnt && targetEnt) {
+          const sArgs = parseArgs(sourceEnt.rawArgs);
+          const subfigureRef = sArgs[1]?.replace(/^#/, '');
+          const tArgs = parseArgs(targetEnt.rawArgs);
+          let scaleX = 1.0;
+          let scaleY = 1.0;
+          let placementRef: string | null = null;
+          if (targetEnt.type.includes('SYMBOL_TARGET')) {
+            placementRef = tArgs.find(a => a.startsWith('#'))?.replace(/^#/, '') || null;
+            const numArgs = tArgs.filter(a => !a.startsWith('#') && !a.startsWith("'") && !isNaN(parseFloat(a)));
+            if (numArgs.length >= 1) scaleX = parseFloat(numArgs[0]);
+            if (numArgs.length >= 2) scaleY = parseFloat(numArgs[1]);
+            else scaleY = scaleX;
+          } else if (targetEnt.type.includes('PLACEMENT')) {
+            placementRef = mapTargetRef;
+          }
+          let originX = 0;
+          let originY = 0;
+          let angle = 0;
+          if (placementRef) {
+            const placeEnt = entityMap.get(placementRef);
+            if (placeEnt) {
+              const pArgs = parseArgs(placeEnt.rawArgs);
+              const pRefs = pArgs.filter(a => a.startsWith('#')).map(a => a.replace(/^#/, ''));
+              const ptRef = pRefs[0];
+              const dirRef = pRefs[1];
+              if (ptRef) {
+                const ptEnt = entityMap.get(ptRef);
+                if (ptEnt) {
+                  const ptArgs = parseArgs(ptEnt.rawArgs);
+                  const cArg = ptArgs.find(a => a.includes('(') && a.includes(')')) || ptArgs[0];
+                  if (cArg) {
+                    const nums = cArg.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim()));
+                    originX = nums[0] || 0;
+                    originY = nums[1] || 0;
+                  }
+                }
+              }
+              if (dirRef) {
+                const dirEnt = entityMap.get(dirRef);
+                if (dirEnt) {
+                  const dArgs = parseArgs(dirEnt.rawArgs);
+                  const cArg = dArgs.find(a => a.includes('(') && a.includes(')')) || dArgs[0];
+                  if (cArg) {
+                    const nums = cArg.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim()));
+                    if (!isNaN(nums[0]) && !isNaN(nums[1])) {
+                      angle = Math.atan2(nums[1], nums[0]);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if (subfigureRef) {
+            mappedItemDefMap.set(entId, { subfigureRef, scaleX, scaleY, originX, originY, angle });
+          }
+        }
+      }
+    }
+  });
+
+  const repChildren = new Map<string, Array<{ childSubfigureId: string; transform: MappedItemDef }>>();
+  const geomToDirectRep = new Map<string, string>();
+
+  entityMap.forEach((ent, repId) => {
+    if (ent.type.includes('SUBFIGURE_REPRESENTATION') || ent.type.includes('SHEET')) {
+      const listRefs = (ent.rawArgs.match(/#\d+/g) || []).map(r => r.replace('#', ''));
+      const queue = [...listRefs];
+      const visited = new Set(queue);
+      while (queue.length > 0) {
+        const curId = queue.shift()!;
+        const mappedDef = mappedItemDefMap.get(curId);
+        if (mappedDef) {
+          let list = repChildren.get(repId);
+          if (!list) {
+            list = [];
+            repChildren.set(repId, list);
+          }
+          list.push({ childSubfigureId: mappedDef.subfigureRef, transform: mappedDef });
+        } else {
+          geomToDirectRep.set(curId, repId);
+          const curEnt = entityMap.get(curId);
+          if (curEnt) {
+            const childRefs = (curEnt.rawArgs.match(/#\d+/g) || []).map(r => r.replace('#', ''));
+            for (const childId of childRefs) {
+              if (!visited.has(childId)) {
+                visited.add(childId);
+                const childEnt = entityMap.get(childId);
+                if (childEnt && !childEnt.type.includes('SUBFIGURE') && !childEnt.type.includes('SHEET')) {
+                  queue.push(childId);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  let rootSheetId: string | null = null;
+  entityMap.forEach((ent, id) => {
+    if (ent.type.includes('SHEET')) rootSheetId = id;
+  });
+
+  const subfigureCumulativeTransforms = new Map<string, AffineMatrix>();
+  const identityMatrix: AffineMatrix = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
+
+  const traverseRep = (curRepId: string, curMatrix: AffineMatrix) => {
+    subfigureCumulativeTransforms.set(curRepId, curMatrix);
+    const children = repChildren.get(curRepId) || [];
+    for (const child of children) {
+      const t = child.transform;
+      const cos = Math.cos(t.angle);
+      const sin = Math.sin(t.angle);
+      const localMatrix: AffineMatrix = {
+        a: cos * t.scaleX,
+        b: sin * t.scaleX,
+        c: -sin * t.scaleY,
+        d: cos * t.scaleY,
+        tx: t.originX,
+        ty: t.originY,
+      };
+      const cum = multiplyMatrix(curMatrix, localMatrix);
+      traverseRep(child.childSubfigureId, cum);
+    }
+  };
+
+  if (rootSheetId) {
+    traverseRep(rootSheetId, identityMatrix);
+  }
+
+  const getEntityTransform = (entId: string): AffineMatrix => {
+    const repId = geomToDirectRep.get(entId);
+    if (repId && subfigureCumulativeTransforms.has(repId)) {
+      return subfigureCumulativeTransforms.get(repId)!;
+    }
+    return identityMatrix;
+  };
+
+  // 6. 座標点 (#id -> CadPoint) および 配置 (AXIS2_PLACEMENT) の再帰的解決キャッシュ
   const pointCache = new Map<string, CadPoint>();
 
   const resolvePoint = (ref: string, depth: number = 0): CadPoint | null => {
@@ -429,7 +614,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     return null;
   };
 
-  // 5. 各エンティティのジオメトリ変換
+  // 7. 各エンティティのジオメトリ変換
   entityMap.forEach((ent, entId) => {
     // 複合エンティティの場合は内部のサブエンティティを順に処理、通常エンティティはそのまま
     const subList = ent.type === 'COMPLEX'
@@ -473,6 +658,11 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       const type = targetEnt.type;
       const args = parseArgs(targetEnt.rawArgs);
 
+      // エンティティの累積アフィン変換行列の取得
+      const mat = getEntityTransform(entId);
+      const scaleFactor = Math.sqrt(mat.a * mat.a + mat.b * mat.b) || 1.0;
+      const rotationAngle = Math.atan2(mat.b, mat.a);
+
       // --- A. LINE / SXF_LINE ---
       if (type === 'LINE' || type.endsWith('_LINE')) {
       let p1: CadPoint | null = null;
@@ -500,8 +690,8 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       if (p1 && p2) {
         entities.push({
           type: 'line',
-          p1,
-          p2,
+          p1: transformCadPoint(p1, mat),
+          p2: transformCadPoint(p2, mat),
           color: defaultColor,
           layer,
         });
@@ -521,7 +711,7 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         const pts: CadPoint[] = [];
         for (const ref of refs) {
           const pt = resolvePoint(ref);
-          if (pt) pts.push(pt);
+          if (pt) pts.push(transformCadPoint(pt, mat));
         }
         if (pts.length >= 2) {
           entities.push({
@@ -553,7 +743,37 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       if (type.includes('TRIMMED_CURVE')) {
         const basisRef = args[1]?.replace(/^#/, '');
         const basisEnt = basisRef ? entityMap.get(basisRef) : null;
-        if (basisEnt && (basisEnt.type === 'CIRCLE' || basisEnt.type.endsWith('_CIRCLE'))) {
+
+        // 1. 直線型 TRIMMED_CURVE (寸法線・引き出し線・補助線・境界線)
+        if (basisEnt && (basisEnt.type === 'LINE' || basisEnt.type.endsWith('_LINE'))) {
+          const p1Ref = args[2]?.match(/#\d+/)?.[0];
+          const p2Ref = args[3]?.match(/#\d+/)?.[0];
+          let p1: CadPoint | null = p1Ref ? resolvePoint(p1Ref) : null;
+          let p2: CadPoint | null = p2Ref ? resolvePoint(p2Ref) : null;
+
+          // トリムに直接ポイント参照がない場合、LINE自体の引数からフォールバック解決
+          if (!p1 || !p2) {
+            const lineArgs = parseArgs(basisEnt.rawArgs);
+            const lineP1Ref = lineArgs[1]?.match(/#\d+/)?.[0] || lineArgs[0]?.match(/#\d+/)?.[0];
+            const lineP2Ref = lineArgs[2]?.match(/#\d+/)?.[0];
+            if (!p1 && lineP1Ref) p1 = resolvePoint(lineP1Ref);
+            if (!p2 && lineP2Ref) p2 = resolvePoint(lineP2Ref);
+          }
+
+          if (p1 && p2 && (p1.x !== p2.x || p1.y !== p2.y)) {
+            entities.push({
+              type: 'line',
+              p1: transformCadPoint(p1, mat),
+              p2: transformCadPoint(p2, mat),
+              color: defaultColor,
+              layer,
+            });
+            continue;
+          }
+        }
+
+        // 2. 円弧型 TRIMMED_CURVE
+        else if (basisEnt && (basisEnt.type === 'CIRCLE' || basisEnt.type.endsWith('_CIRCLE'))) {
           const bArgs = parseArgs(basisEnt.rawArgs);
           center = resolvePoint(bArgs[1] || bArgs[0]);
           const r = parseFloat(bArgs[2]);
@@ -608,17 +828,17 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       }
 
       // 有効な中心と半径を持つ円・円弧のみを描画登録
-      // 【安全ガード】全円(!isArc)で半径400mmを超えるものは構造物ではなく誤認パラメータのため除外
-      const isTooBigFullCircle = !isArc && radius !== null && radius > 400;
-      const isTooBigArc = isArc && radius !== null && radius > 50000;
+      const transformedRadius = radius !== null ? radius * scaleFactor : null;
+      const isTooBigFullCircle = !isArc && transformedRadius !== null && transformedRadius > 400;
+      const isTooBigArc = isArc && transformedRadius !== null && transformedRadius > 50000;
 
-      if (center && radius !== null && radius > 0.05 && !isTooBigFullCircle && !isTooBigArc) {
+      if (center && transformedRadius !== null && transformedRadius > 0.05 && !isTooBigFullCircle && !isTooBigArc) {
         entities.push({
           type: 'circle',
-          center,
-          radius,
-          startAngle,
-          endAngle,
+          center: transformCadPoint(center, mat),
+          radius: transformedRadius,
+          startAngle: startAngle + rotationAngle,
+          endAngle: endAngle + rotationAngle,
           isArc,
           clockwise,
           color: defaultColor,
@@ -697,7 +917,8 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
               const dirEnt = entityMap.get(dirRef.replace('#', ''));
               if (dirEnt && dirEnt.type.includes('DIRECTION')) {
                 const dArgs = parseArgs(dirEnt.rawArgs);
-                const coords = dArgs[0]?.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim())) || [1, 0];
+                const tupleArg = dArgs.find(a => a.includes('(') && a.includes(')')) || dArgs[1] || dArgs[0];
+                const coords = tupleArg?.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim())) || [1, 0];
                 if (!isNaN(coords[0]) && !isNaN(coords[1])) {
                   angle = Math.atan2(coords[1], coords[0]);
                 }
@@ -714,12 +935,14 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
 
       // 有効なテキストと座標がある場合のみ登録（制御文字やシステムノイズは除外済み）
       if (textStr && textStr.trim().length > 0 && pos) {
+        const transformedPos = transformCadPoint(pos, mat);
+        const transformedHeight = height * scaleFactor >= 0.8 ? height * scaleFactor : (height || 3.5);
         entities.push({
           type: 'text',
           text: textStr.trim(),
-          position: pos,
-          height: height || 3.5,
-          angle,
+          position: transformedPos,
+          height: transformedHeight,
+          angle: (angle || 0) + rotationAngle,
           align,
           baseline,
           color: defaultColor === '#38bdf8' ? '#f8fafc' : defaultColor,
@@ -806,7 +1029,13 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
       const files = Object.keys(zip.files);
       const p21File = files.find(f => /\.(p21|step|stp)$/i.test(f)) || files.find(f => !zip.files[f].dir);
       if (p21File) {
-        const text = await zip.files[p21File].async('text');
+        const u8 = await zip.files[p21File].async('uint8array');
+        let text = '';
+        try {
+          text = new TextDecoder('utf-8', { fatal: true }).decode(u8);
+        } catch {
+          text = new TextDecoder('shift-jis').decode(u8);
+        }
         const drawing = parseP21Text(text, fileName);
         drawing.format = 'SFC';
         return drawing;

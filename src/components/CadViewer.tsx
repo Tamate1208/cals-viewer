@@ -18,7 +18,7 @@ import {
   PanelRightOpen,
   Info
 } from 'lucide-react';
-import { parseP21Text, parseSfcBuffer, type CadDrawing } from '../utils/sxfParser';
+import { parseP21Text, parseSfcBuffer, extractCleanCadText, type CadDrawing } from '../utils/sxfParser';
 
 interface CadViewerProps {
   fileUrl?: string;
@@ -93,7 +93,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         return;
       }
 
-      const cacheKey = `${fileUrl}_${fileName}_v20261017_complex_decomp_v4`;
+      const cacheKey = `${fileUrl}_${fileName}_v20261020_sxf_mapped_item_transform_v9`;
       if (drawingCache.has(cacheKey)) {
         const cached = drawingCache.get(cacheKey)!;
         setDrawing(cached);
@@ -123,9 +123,9 @@ export const CadViewer: React.FC<CadViewerProps> = ({
 
           let text = '';
           try {
-            text = new TextDecoder('shift-jis').decode(buffer);
+            text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
           } catch {
-            text = new TextDecoder('utf-8').decode(buffer);
+            text = new TextDecoder('shift-jis').decode(buffer);
           }
           parsed = parseP21Text(text, fileName);
         }
@@ -245,15 +245,15 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         ctx.fillStyle = ent.color || '#f8fafc';
 
         // 描画テキストの安全サニタイズ（制御文字の混入を絶対防止）
-        const displayText = ent.text
-          .replace(/\${3}[a-zA-Z0-9_\-\s]+/gi, '')
-          .replace(/＄{3}[a-zA-Z0-9_\-\s]+/gi, '')
-          .replace(/^sxf_[a-zA-Z0-9_\-\s]+/gi, '')
-          .trim();
-
-        if (displayText) {
-          ctx.fillText(displayText, 0, 0);
+        const cleaned = extractCleanCadText(ent.text);
+        if (!cleaned.isValid || !cleaned.text) {
+          ctx.restore();
+          continue;
         }
+
+        ctx.textAlign = cleaned.align || ent.align || 'left';
+        ctx.textBaseline = cleaned.baseline || ent.baseline || (invertY ? 'top' : 'bottom');
+        ctx.fillText(cleaned.text, 0, 0);
 
         ctx.restore();
       }
