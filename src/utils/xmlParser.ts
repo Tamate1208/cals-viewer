@@ -636,13 +636,14 @@ export function parseReportXml(xmlString: string): ReportItem[] {
         if (/^3$|^03$/.test(cleanRaw)) return '協議';
         if (/^4$|^04$/.test(cleanRaw)) return '提出';
         if (/^5$|^05$/.test(cleanRaw)) return '報告';
-        if (/^6$|^06$/.test(cleanRaw)) return '連絡';
+        if (/^6$|^06$/.test(cleanRaw)) return '通知';
         if (/指示/.test(cleanRaw)) return '指示';
         if (/承諾|承認|認可/.test(cleanRaw)) return '承諾';
         if (/協議/.test(cleanRaw)) return '協議';
         if (/提出|届出|申請|願/.test(cleanRaw)) return '提出';
         if (/報告|週報|月報/.test(cleanRaw)) return '報告';
-        if (/連絡|通知/.test(cleanRaw)) return '連絡';
+        if (/通知/.test(cleanRaw)) return '通知';
+        if (/連絡/.test(cleanRaw)) return '連絡';
         if (/立会/.test(cleanRaw)) return '立会';
         if (/確認|検測/.test(cleanRaw)) return '確認';
         return cleanRaw;
@@ -653,7 +654,8 @@ export function parseReportXml(xmlString: string): ReportItem[] {
       if (/協議/.test(name)) return '協議';
       if (/提出|届出|申請|願/.test(name)) return '提出';
       if (/報告|週報|月報/.test(name)) return '報告';
-      if (/連絡|通知/.test(name)) return '連絡';
+      if (/通知/.test(name)) return '通知';
+      if (/連絡/.test(name)) return '連絡';
       if (/立会/.test(name)) return '立会';
       if (/確認|検測/.test(name)) return '確認';
       return '';

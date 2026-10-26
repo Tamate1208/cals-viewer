@@ -614,6 +614,22 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     return null;
   };
 
+  // 6.5 TRIMMED_CURVE などの基底曲線（basis_curve）として参照されているエンティティIDの収集
+  // （これらは幾何定義用であり、単独で二重描画してはならない）
+  const basisCurveIds = new Set<string>();
+  entityMap.forEach((ent) => {
+    const subList = ent.type === 'COMPLEX' ? decomposeComplexEntity(ent.rawArgs) : [ent];
+    for (const sub of subList) {
+      if (sub.type === 'TRIMMED_CURVE' || sub.type.includes('TRIMMED_CURVE')) {
+        const args = parseArgs(sub.rawArgs);
+        const basisRef = args[1]?.replace(/^#/, '');
+        if (basisRef) {
+          basisCurveIds.add(basisRef);
+        }
+      }
+    }
+  });
+
   // 7. 各エンティティのジオメトリ変換
   entityMap.forEach((ent, entId) => {
     // 複合エンティティの場合は内部のサブエンティティを順に処理、通常エンティティはそのまま
@@ -664,188 +680,243 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       const rotationAngle = Math.atan2(mat.b, mat.a);
 
       // --- A. LINE / SXF_LINE ---
-      if (type === 'LINE' || type.endsWith('_LINE')) {
-      let p1: CadPoint | null = null;
-      let p2: CadPoint | null = null;
+      // TRIMMED_CURVE の基底になっている LINE は単独描画をスキップ
+      if ((type === 'LINE' || type.endsWith('_LINE')) && !basisCurveIds.has(entId)) {
+        let p1: CadPoint | null = null;
+        let p2: CadPoint | null = null;
 
-      const pRefs = args.filter(a => a.startsWith('#'));
-      if (pRefs.length >= 2) {
-        p1 = resolvePoint(pRefs[0]);
-        p2 = resolvePoint(pRefs[1]);
-      } else if (pRefs.length === 1) {
-        p1 = resolvePoint(pRefs[0]);
-        if (pRefs[1]) {
-          const vecEnt = entityMap.get(pRefs[1].replace('#', ''));
-          if (vecEnt && (vecEnt.type.includes('VECTOR') || vecEnt.type.includes('DIRECTION'))) {
-            const vArgs = parseArgs(vecEnt.rawArgs);
-            const vCoords = vArgs[0]?.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim())) || [0, 0];
-            const len = parseFloat(vArgs[1]) || 1.0;
-            if (p1 && !isNaN(vCoords[0]) && !isNaN(vCoords[1])) {
-              p2 = { x: p1.x + vCoords[0] * len, y: p1.y + vCoords[1] * len };
+        const pRefs = args.filter(a => a.startsWith('#'));
+        if (pRefs.length >= 2) {
+          p1 = resolvePoint(pRefs[0]);
+          p2 = resolvePoint(pRefs[1]);
+        } else if (pRefs.length === 1) {
+          p1 = resolvePoint(pRefs[0]);
+          if (pRefs[1]) {
+            const vecEnt = entityMap.get(pRefs[1].replace('#', ''));
+            if (vecEnt && (vecEnt.type.includes('VECTOR') || vecEnt.type.includes('DIRECTION'))) {
+              const vArgs = parseArgs(vecEnt.rawArgs);
+              const vCoords = vArgs[0]?.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim())) || [0, 0];
+              const len = parseFloat(vArgs[1]) || 1.0;
+              if (p1 && !isNaN(vCoords[0]) && !isNaN(vCoords[1])) {
+                p2 = { x: p1.x + vCoords[0] * len, y: p1.y + vCoords[1] * len };
+              }
             }
           }
         }
-      }
 
-      if (p1 && p2) {
-        entities.push({
-          type: 'line',
-          p1: transformCadPoint(p1, mat),
-          p2: transformCadPoint(p2, mat),
-          color: defaultColor,
-          layer,
-        });
-      }
-    }
-
-    // --- B. POLYLINE / COMPOSITE_CURVE / LINE_STRING ---
-    else if (
-      type === 'POLYLINE' || 
-      type.includes('POLYLINE') || 
-      type.includes('LINE_STRING') || 
-      type.includes('COMPOSITE_CURVE')
-    ) {
-      const pointsListStr = args.find(a => a.startsWith('(') && a.endsWith(')'));
-      if (pointsListStr) {
-        const refs = pointsListStr.replace(/[()]/g, '').split(',').map(s => s.trim().replace(/^#/, ''));
-        const pts: CadPoint[] = [];
-        for (const ref of refs) {
-          const pt = resolvePoint(ref);
-          if (pt) pts.push(transformCadPoint(pt, mat));
-        }
-        if (pts.length >= 2) {
+        if (p1 && p2) {
           entities.push({
-            type: 'polyline',
-            points: pts,
+            type: 'line',
+            p1: transformCadPoint(p1, mat),
+            p2: transformCadPoint(p2, mat),
             color: defaultColor,
             layer,
           });
         }
       }
-    }
 
-    // --- C. CIRCLE / ARC / TRIMMED_CURVE ---
-    else if (
-      type === 'CIRCLE' || 
-      type.endsWith('_CIRCLE') || 
-      type === 'TRIMMED_CURVE' || 
-      type.endsWith('_ARC') ||
-      type === 'COMPOSITE_CURVE_SEGMENT'
-    ) {
-      let center: CadPoint | null = null;
-      let radius: number | null = null;
-      let startAngle = 0;
-      let endAngle = Math.PI * 2;
-      let isArc = false;
-      let clockwise = false;
-
-      // TRIMMED_CURVE('', #basis, (#p1), (#p2), .T./.F., ...) の解析
-      if (type.includes('TRIMMED_CURVE')) {
-        const basisRef = args[1]?.replace(/^#/, '');
-        const basisEnt = basisRef ? entityMap.get(basisRef) : null;
-
-        // 1. 直線型 TRIMMED_CURVE (寸法線・引き出し線・補助線・境界線)
-        if (basisEnt && (basisEnt.type === 'LINE' || basisEnt.type.endsWith('_LINE'))) {
-          const p1Ref = args[2]?.match(/#\d+/)?.[0];
-          const p2Ref = args[3]?.match(/#\d+/)?.[0];
-          let p1: CadPoint | null = p1Ref ? resolvePoint(p1Ref) : null;
-          let p2: CadPoint | null = p2Ref ? resolvePoint(p2Ref) : null;
-
-          // トリムに直接ポイント参照がない場合、LINE自体の引数からフォールバック解決
-          if (!p1 || !p2) {
-            const lineArgs = parseArgs(basisEnt.rawArgs);
-            const lineP1Ref = lineArgs[1]?.match(/#\d+/)?.[0] || lineArgs[0]?.match(/#\d+/)?.[0];
-            const lineP2Ref = lineArgs[2]?.match(/#\d+/)?.[0];
-            if (!p1 && lineP1Ref) p1 = resolvePoint(lineP1Ref);
-            if (!p2 && lineP2Ref) p2 = resolvePoint(lineP2Ref);
+      // --- B. POLYLINE / COMPOSITE_CURVE / LINE_STRING ---
+      else if (
+        type === 'POLYLINE' || 
+        type.includes('POLYLINE') || 
+        type.includes('LINE_STRING') || 
+        type.includes('COMPOSITE_CURVE')
+      ) {
+        const pointsListStr = args.find(a => a.startsWith('(') && a.endsWith(')'));
+        if (pointsListStr) {
+          const refs = pointsListStr.replace(/[()]/g, '').split(',').map(s => s.trim().replace(/^#/, ''));
+          const pts: CadPoint[] = [];
+          for (const ref of refs) {
+            const pt = resolvePoint(ref);
+            if (pt) pts.push(transformCadPoint(pt, mat));
           }
-
-          if (p1 && p2 && (p1.x !== p2.x || p1.y !== p2.y)) {
+          if (pts.length >= 2) {
             entities.push({
-              type: 'line',
-              p1: transformCadPoint(p1, mat),
-              p2: transformCadPoint(p2, mat),
+              type: 'polyline',
+              points: pts,
               color: defaultColor,
               layer,
             });
-            continue;
           }
         }
+      }
 
-        // 2. 円弧型 TRIMMED_CURVE
-        else if (basisEnt && (basisEnt.type === 'CIRCLE' || basisEnt.type.endsWith('_CIRCLE'))) {
-          const bArgs = parseArgs(basisEnt.rawArgs);
-          center = resolvePoint(bArgs[1] || bArgs[0]);
-          const r = parseFloat(bArgs[2]);
-          if (!isNaN(r) && r > 0 && r < 50000) {
-            radius = r;
+      // --- C. CIRCLE / ARC / TRIMMED_CURVE ---
+      // TRIMMED_CURVE の基底になっている CIRCLE は単独描画をスキップ（TRIMMED_CURVE側で円弧として描画）
+      else if (
+        ((type === 'CIRCLE' || type.endsWith('_CIRCLE')) && !basisCurveIds.has(entId)) || 
+        type === 'TRIMMED_CURVE' || 
+        type.endsWith('_ARC') ||
+        type === 'COMPOSITE_CURVE_SEGMENT'
+      ) {
+        let center: CadPoint | null = null;
+        let radius: number | null = null;
+        let startAngle = 0;
+        let endAngle = Math.PI * 2;
+        let isArc = false;
+        let clockwise = false;
+
+        // TRIMMED_CURVE('', #basis, (#p1), (#p2), .T./.F., ...) の解析
+        if (type.includes('TRIMMED_CURVE')) {
+          const basisRef = args[1]?.replace(/^#/, '');
+          const basisEnt = basisRef ? entityMap.get(basisRef) : null;
+
+          // 1. 直線型 TRIMMED_CURVE (寸法線・引き出し線・補助線・境界線)
+          if (basisEnt && (basisEnt.type === 'LINE' || basisEnt.type.endsWith('_LINE'))) {
+            const p1Ref = args[2]?.match(/#\d+/)?.[0];
+            const p2Ref = args[3]?.match(/#\d+/)?.[0];
+            let p1: CadPoint | null = p1Ref ? resolvePoint(p1Ref) : null;
+            let p2: CadPoint | null = p2Ref ? resolvePoint(p2Ref) : null;
+
+            // トリムに直接ポイント参照がない場合、LINE自体の引数からフォールバック解決
+            if (!p1 || !p2) {
+              const lineArgs = parseArgs(basisEnt.rawArgs);
+              const lineP1Ref = lineArgs[1]?.match(/#\d+/)?.[0] || lineArgs[0]?.match(/#\d+/)?.[0];
+              const lineP2Ref = lineArgs[2]?.match(/#\d+/)?.[0];
+              if (!p1 && lineP1Ref) p1 = resolvePoint(lineP1Ref);
+              if (!p2 && lineP2Ref) p2 = resolvePoint(lineP2Ref);
+            }
+
+            if (p1 && p2 && (p1.x !== p2.x || p1.y !== p2.y)) {
+              entities.push({
+                type: 'line',
+                p1: transformCadPoint(p1, mat),
+                p2: transformCadPoint(p2, mat),
+                color: defaultColor,
+                layer,
+              });
+              continue;
+            }
           }
 
-          // トリムパラメータ (角度)
-          const p1Str = args[2]?.replace(/[()]/g, '').trim();
-          const p2Str = args[3]?.replace(/[()]/g, '').trim();
-          const p1 = parseFloat(p1Str);
-          const p2 = parseFloat(p2Str);
+          // 2. 円弧型 TRIMMED_CURVE
+          else if (basisEnt && (basisEnt.type === 'CIRCLE' || basisEnt.type.endsWith('_CIRCLE'))) {
+            const bArgs = parseArgs(basisEnt.rawArgs);
+            const placementRef = bArgs[1]?.replace(/^#/, '') || bArgs[0]?.replace(/^#/, '');
+            let localAxisAngle = 0;
 
-          // 回転方向 (.T. = 反時計回り, .F. = 時計回り)
-          const sense = args[4]?.toUpperCase();
-          if (sense === '.F.') {
-            clockwise = true;
-          }
-
-          if (!isNaN(p1) && !isNaN(p2)) {
-            // パラメータが度数法 (> 6.3) かラジアン (<= 6.3) かを正確に判定
-            startAngle = Math.abs(p1) > 6.3 ? (p1 * Math.PI) / 180 : p1;
-            endAngle = Math.abs(p2) > 6.3 ? (p2 * Math.PI) / 180 : p2;
-            isArc = true;
-          }
-        }
-      } else {
-        // 通常の CIRCLE('', #axis, radius) または sxf_arc(name, #placement, radius, a1, a2)
-        const pRef = args.find(a => a.startsWith('#'));
-        if (pRef) {
-          center = resolvePoint(pRef);
-        }
-
-        // 半径の取得: 第2〜3引数あたりの正の数値
-        for (let i = 1; i < args.length; i++) {
-          const num = parseFloat(args[i]);
-          if (!isNaN(num) && num > 0.05 && num < 30000) {
-            radius = num;
-            // 後続に角度がある場合 (sxf_arc)
-            if (args[i + 1] && args[i + 2]) {
-              const a1 = parseFloat(args[i + 1]);
-              const a2 = parseFloat(args[i + 2]);
-              if (!isNaN(a1) && !isNaN(a2)) {
-                startAngle = Math.abs(a1) > 6.3 ? (a1 * Math.PI) / 180 : a1;
-                endAngle = Math.abs(a2) > 6.3 ? (a2 * Math.PI) / 180 : a2;
-                isArc = true;
+            if (placementRef) {
+              const placeEnt = entityMap.get(placementRef);
+              if (placeEnt) {
+                const pArgs = parseArgs(placeEnt.rawArgs);
+                const locRef = pArgs[0]?.replace(/^#/, '') || pArgs[1]?.replace(/^#/, '');
+                center = locRef ? resolvePoint(locRef) : null;
+                // 方向ベクトル (AXIS)
+                const axisRef = pArgs[1]?.replace(/^#/, '') || pArgs[2]?.replace(/^#/, '');
+                if (axisRef && axisRef !== '$') {
+                  const dirEnt = entityMap.get(axisRef);
+                  if (dirEnt && (dirEnt.type.includes('DIRECTION') || dirEnt.type.includes('VECTOR'))) {
+                    const dArgs = parseArgs(dirEnt.rawArgs);
+                    const dCoords = dArgs[0]?.replace(/[()]/g, '').split(',').map(s => parseFloat(s.trim())) || [1, 0];
+                    if (!isNaN(dCoords[0]) && !isNaN(dCoords[1])) {
+                      localAxisAngle = Math.atan2(dCoords[1], dCoords[0]);
+                    }
+                  }
+                }
               }
             }
-            break;
+            if (!center) {
+              center = resolvePoint(bArgs[1] || bArgs[0]);
+            }
+
+            const r = parseFloat(bArgs[2]);
+            if (!isNaN(r) && r > 0 && r < 500000) {
+              radius = r;
+            }
+
+            // トリムパラメータの抽出ヘルパー (PARAMETER_VALUE または 点参照 #id または 数値)
+            const parseTrimParam = (rawArg?: string): { val?: number; pt?: CadPoint } => {
+              if (!rawArg) return {};
+              const clean = rawArg.trim();
+              // PARAMETER_VALUE(...)
+              const pMatch = clean.match(/PARAMETER_VALUE\s*\(\s*([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*\)/i);
+              if (pMatch) {
+                return { val: parseFloat(pMatch[1]) };
+              }
+              // 点の参照 (#123)
+              const ptMatch = clean.match(/#(\d+)/);
+              if (ptMatch) {
+                const pt = resolvePoint(ptMatch[1]);
+                if (pt) return { pt };
+              }
+              // 単純数値
+              const stripped = clean.replace(/[()]/g, '').trim();
+              const n = parseFloat(stripped);
+              if (!isNaN(n)) {
+                return { val: n };
+              }
+              return {};
+            };
+
+            const trim1 = parseTrimParam(args[2]);
+            const trim2 = parseTrimParam(args[3]);
+
+            // 回転方向 (.T. = 反時計回り/角度増加, .F. = 時計回り/角度減少)
+            const sense = args[4]?.toUpperCase();
+            if (sense === '.F.') {
+              clockwise = true;
+            }
+
+            if (trim1.val !== undefined && trim2.val !== undefined) {
+              // パラメータが度数法 (> 6.3) かラジアン (<= 6.3) かを正確に判定
+              const a1 = Math.abs(trim1.val) > 6.3 ? (trim1.val * Math.PI) / 180 : trim1.val;
+              const a2 = Math.abs(trim2.val) > 6.3 ? (trim2.val * Math.PI) / 180 : trim2.val;
+              startAngle = a1 + localAxisAngle;
+              endAngle = a2 + localAxisAngle;
+              isArc = true;
+            } else if (trim1.pt && trim2.pt && center) {
+              startAngle = Math.atan2(trim1.pt.y - center.y, trim1.pt.x - center.x);
+              endAngle = Math.atan2(trim2.pt.y - center.y, trim2.pt.x - center.x);
+              isArc = true;
+            }
+          }
+        } else {
+          // 通常の単独 CIRCLE('', #axis, radius) または sxf_arc(name, #placement, radius, a1, a2)
+          const pRef = args.find(a => a.startsWith('#'));
+          if (pRef) {
+            center = resolvePoint(pRef);
+          }
+
+          // 半径の取得: 第2〜3引数あたりの正の数値
+          for (let i = 1; i < args.length; i++) {
+            const num = parseFloat(args[i]);
+            if (!isNaN(num) && num > 0.05 && num < 30000) {
+              radius = num;
+              // 後続に角度がある場合 (sxf_arc)
+              if (args[i + 1] && args[i + 2]) {
+                const a1 = parseFloat(args[i + 1]);
+                const a2 = parseFloat(args[i + 2]);
+                if (!isNaN(a1) && !isNaN(a2)) {
+                  startAngle = Math.abs(a1) > 6.3 ? (a1 * Math.PI) / 180 : a1;
+                  endAngle = Math.abs(a2) > 6.3 ? (a2 * Math.PI) / 180 : a2;
+                  isArc = true;
+                }
+              }
+              break;
+            }
           }
         }
-      }
 
-      // 有効な中心と半径を持つ円・円弧のみを描画登録
-      const transformedRadius = radius !== null ? radius * scaleFactor : null;
-      const isTooBigFullCircle = !isArc && transformedRadius !== null && transformedRadius > 400;
-      const isTooBigArc = isArc && transformedRadius !== null && transformedRadius > 50000;
+        // 有効な中心と半径を持つ円・円弧のみを描画登録
+        const transformedRadius = radius !== null ? radius * scaleFactor : null;
+        // 単独の円（isArc=false）で極端に巨大なものは誤検出として除外（ただし丸囲み数字や測量点は通す）
+        const isTooBigFullCircle = !isArc && transformedRadius !== null && transformedRadius > 2000;
+        const isTooBigArc = isArc && transformedRadius !== null && transformedRadius > 500000;
 
-      if (center && transformedRadius !== null && transformedRadius > 0.05 && !isTooBigFullCircle && !isTooBigArc) {
-        entities.push({
-          type: 'circle',
-          center: transformCadPoint(center, mat),
-          radius: transformedRadius,
-          startAngle: startAngle + rotationAngle,
-          endAngle: endAngle + rotationAngle,
-          isArc,
-          clockwise,
-          color: defaultColor,
-          layer,
-        });
+        if (center && transformedRadius !== null && transformedRadius > 0.05 && !isTooBigFullCircle && !isTooBigArc) {
+          entities.push({
+            type: 'circle',
+            center: transformCadPoint(center, mat),
+            radius: transformedRadius,
+            startAngle: startAngle + rotationAngle,
+            endAngle: endAngle + rotationAngle,
+            isArc,
+            clockwise,
+            color: defaultColor,
+            layer,
+          });
+        }
       }
-    }
 
     // --- D. TEXT / TEXT_LITERAL / DRAUGHTING_TEXT / ANNOTATION ---
     else if (

@@ -215,8 +215,10 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       else if (ent.type === 'circle') {
         ctx.beginPath();
         if (ent.isArc && ent.startAngle !== undefined && ent.endAngle !== undefined) {
-          const ccw = invertY ? !ent.clockwise : !!ent.clockwise;
-          ctx.arc(ent.center.x, ent.center.y, ent.radius, ent.startAngle, ent.endAngle, ccw);
+          // STEP仕様: clockwise === false (.T.) -> 角度増加方向 (Canvasの anticlockwise = false)
+          //           clockwise === true (.F.)  -> 角度減少方向 (Canvasの anticlockwise = true)
+          const anticlockwise = !!ent.clockwise;
+          ctx.arc(ent.center.x, ent.center.y, ent.radius, ent.startAngle, ent.endAngle, anticlockwise);
         } else {
           ctx.arc(ent.center.x, ent.center.y, ent.radius, 0, Math.PI * 2);
         }
