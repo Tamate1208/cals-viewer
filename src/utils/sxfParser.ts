@@ -346,6 +346,18 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     }
   });
 
+  // OCCURRENCE (STYLED_ITEM) から実体ジオメトリへのレイヤー伝播
+  entityLayerMap.forEach((layerName, occId) => {
+    const raw = entityMap.get(occId)?.rawArgs || '';
+    const styledMatch = raw.match(/STYLED_ITEM\s*\([^,]+,\s*#(\d+)\s*\)/i);
+    if (styledMatch) {
+      const geomId = styledMatch[1];
+      if (!entityLayerMap.has(geomId)) {
+        entityLayerMap.set(geomId, layerName);
+      }
+    }
+  });
+
   // 4. 複合エンティティの内部サブエンティティ分解ヘルパー
   const decomposeComplexEntity = (raw: string): Array<{ type: string; rawArgs: string }> => {
     const subEntities: Array<{ type: string; rawArgs: string }> = [];
@@ -1396,8 +1408,25 @@ function calculateBounds(entities: CadEntity[]): CadDrawing['bounds'] {
     } else if (ent.type === 'polyline') {
       for (const p of ent.points) update(p.x, p.y);
     } else if (ent.type === 'circle') {
-      update(ent.center.x - ent.radius, ent.center.y - ent.radius);
-      update(ent.center.x + ent.radius, ent.center.y + ent.radius);
+      if (!ent.isArc) {
+        update(ent.center.x - ent.radius, ent.center.y - ent.radius);
+        update(ent.center.x + ent.radius, ent.center.y + ent.radius);
+      } else {
+        // 円弧実体の正確な外接矩形をサンプリング計算（巨大半径の緩和曲線でBoundsが爆発するのを防止）
+        const a1 = ent.startAngle ?? 0;
+        const a2 = ent.endAngle ?? Math.PI * 2;
+        const steps = 16;
+        let totalAngle = a2 - a1;
+        if (ent.clockwise) {
+          if (totalAngle > 0) totalAngle -= Math.PI * 2;
+        } else {
+          if (totalAngle < 0) totalAngle += Math.PI * 2;
+        }
+        for (let i = 0; i <= steps; i++) {
+          const theta = a1 + (totalAngle * i) / steps;
+          update(ent.center.x + ent.radius * Math.cos(theta), ent.center.y + ent.radius * Math.sin(theta));
+        }
+      }
     } else if (ent.type === 'text') {
       update(ent.position.x, ent.position.y);
       update(ent.position.x + (ent.text.length * ent.height), ent.position.y + ent.height);
