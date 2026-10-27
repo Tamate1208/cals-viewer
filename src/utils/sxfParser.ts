@@ -822,12 +822,13 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
         }
       }
 
-      // --- B. POLYLINE / COMPOSITE_CURVE / LINE_STRING ---
+      // --- B. POLYLINE / LINE_STRING ---
+      // COMPOSITE_CURVE は内部のセグメント(TRIMMED_CURVEやPOLYLINE)側で描画されるため、
+      // セグメントIDを頂点と誤認して画面外の中心点を結ぶのを防止
       else if (
         type === 'POLYLINE' || 
         type.includes('POLYLINE') || 
-        type.includes('LINE_STRING') || 
-        type.includes('COMPOSITE_CURVE')
+        type.includes('LINE_STRING')
       ) {
         const pointsListStr = args.find(a => a.startsWith('(') && a.endsWith(')'));
         if (pointsListStr) {
@@ -1115,12 +1116,37 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
             height = num;
           }
         }
+
+        // PLANAR_EXTENT(#extent) から文字枠高さの抽出
+        if (arg.startsWith('#')) {
+          const extEnt = entityMap.get(arg.replace('#', ''));
+          if (extEnt && extEnt.type.includes('PLANAR_EXTENT')) {
+            const extArgs = parseArgs(extEnt.rawArgs).filter(a => !isNaN(parseFloat(a)));
+            if (extArgs.length >= 2) {
+              const h = parseFloat(extArgs[1]);
+              if (!isNaN(h) && h > 0) {
+                height = h;
+              }
+            }
+          }
+        }
       }
 
       // 有効なテキストと座標がある場合のみ登録（制御文字やシステムノイズは除外済み）
       if (textStr && textStr.trim().length > 0 && pos) {
         const transformedPos = transformCadPoint(pos, mat);
-        const transformedHeight = height * scaleFactor >= 0.8 ? height * scaleFactor : (height || 3.5);
+        let transformedHeight = height;
+        if (height > 50) {
+          // 部分図座標系（ローカル座標系）の数値なので scaleFactor を掛ける
+          transformedHeight = height * scaleFactor;
+        } else if (scaleFactor < 0.5 && height < 15) {
+          // すでにmm単位で与えられている場合はそのまま
+          transformedHeight = height;
+        } else {
+          transformedHeight = height * scaleFactor >= 0.8 ? height * scaleFactor : (height || 2.5);
+        }
+        // 最低でも 1.2mm は確保し、極端な肥大化は抑制
+        transformedHeight = Math.max(1.2, Math.min(30, transformedHeight));
         entities.push({
           type: 'text',
           text: textStr.trim(),

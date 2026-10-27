@@ -297,9 +297,10 @@ export const CadViewer: React.FC<CadViewerProps> = ({
           ctx.scale(1, -1);
         }
 
-        const rawHeight = ent.height || 4.0;
+        const rawHeight = ent.height || 2.5;
         const screenPx = rawHeight * transform.k;
-        const renderHeight = screenPx < 7 ? 7 / transform.k : rawHeight;
+        // 全体表示時でも文字が周囲の図面枠や引出線を突き破らないよう、強制拡大の下限を適正化(3.5px)
+        const renderHeight = screenPx < 3.5 ? 3.5 / transform.k : rawHeight;
 
         ctx.font = `${renderHeight}px "Yu Gothic", "Meiryo", sans-serif`;
         ctx.textAlign = ent.align || 'left';
