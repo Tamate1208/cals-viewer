@@ -18,6 +18,8 @@ export interface CadPoint {
   y: number;
 }
 
+export type CadLineType = 'continuous' | 'dashed' | 'chain' | 'phantom' | string;
+
 export interface CadLine {
   type: 'line';
   p1: CadPoint;
@@ -25,6 +27,8 @@ export interface CadLine {
   color: string;
   layer: string;
   width?: number;
+  lineType?: CadLineType;
+  lineWidthMm?: number;
 }
 
 export interface CadCircle {
@@ -37,6 +41,8 @@ export interface CadCircle {
   clockwise?: boolean; // 回転方向
   color: string;
   layer: string;
+  lineType?: CadLineType;
+  lineWidthMm?: number;
 }
 
 export interface CadPolyline {
@@ -45,6 +51,8 @@ export interface CadPolyline {
   closed?: boolean;
   color: string;
   layer: string;
+  lineType?: CadLineType;
+  lineWidthMm?: number;
 }
 
 export interface CadText {
@@ -630,6 +638,77 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     }
   });
 
+  // 6.6 線種・線幅（CURVE_STYLE / STYLED_ITEM）の解析とエンティティスタイルマップ構築
+  const fontMap = new Map<string, string>();
+  const widthMap = new Map<string, number>();
+  const colorIdMap = new Map<string, string>();
+
+  entityMap.forEach((ent, id) => {
+    const t = ent.type;
+    if (t.includes('PRE_DEFINED_CURVE_FONT') || t.includes('CURVE_FONT')) {
+      const fMatch = ent.rawArgs.match(/'([^']+)'/);
+      if (fMatch) fontMap.set(id, fMatch[1].toLowerCase());
+    } else if (t.includes('LENGTH_MEASURE') || t.includes('POSITIVE_LENGTH_MEASURE')) {
+      const wMatch = ent.rawArgs.match(/POSITIVE_LENGTH_MEASURE\s*\(\s*([0-9.]+)\s*\)/) || ent.rawArgs.match(/([0-9.]+)/);
+      if (wMatch) widthMap.set(id, parseFloat(wMatch[1]));
+    } else if (t.includes('DRAUGHTING_PRE_DEFINED_COLOUR') || t.includes('COLOUR')) {
+      const cMatch = ent.rawArgs.match(/'([^']+)'/);
+      if (cMatch) colorIdMap.set(id, cMatch[1].toLowerCase());
+    }
+  });
+
+  const curveStyleMap = new Map<string, { font: CadLineType; widthMm: number; color?: string }>();
+  entityMap.forEach((ent, id) => {
+    if (ent.type === 'CURVE_STYLE' || ent.type.includes('CURVE_STYLE')) {
+      const refs = ent.rawArgs.match(/#\d+/g) || [];
+      let font: CadLineType = 'continuous';
+      let widthMm = 0.25;
+      let color: string | undefined = undefined;
+      for (const r of refs) {
+        const cleanRef = r.replace('#', '');
+        if (fontMap.has(cleanRef)) font = fontMap.get(cleanRef)!;
+        if (widthMap.has(cleanRef)) widthMm = widthMap.get(cleanRef)!;
+        if (colorIdMap.has(cleanRef)) color = resolveCadColor(colorIdMap.get(cleanRef));
+      }
+      curveStyleMap.set(id, { font, widthMm, color });
+    }
+  });
+
+  const presentationStyleMap = new Map<string, { font: CadLineType; widthMm: number; color?: string }>();
+  entityMap.forEach((ent, id) => {
+    if (ent.type.includes('PRESENTATION_STYLE_ASSIGNMENT')) {
+      const refs = ent.rawArgs.match(/#\d+/g) || [];
+      for (const r of refs) {
+        const cleanRef = r.replace('#', '');
+        if (curveStyleMap.has(cleanRef)) {
+          presentationStyleMap.set(id, curveStyleMap.get(cleanRef)!);
+          break;
+        }
+      }
+    }
+  });
+
+  const entityStyleMap = new Map<string, { font: CadLineType; widthMm: number; color?: string }>();
+  const scanStyledItem = (rawArgs: string) => {
+    const m = rawArgs.match(/STYLED_ITEM\s*\(\s*\(\s*(#[0-9]+)\s*\)\s*,\s*(#[0-9]+)\s*\)/i);
+    if (m) {
+      const styleRef = m[1].replace('#', '');
+      const targetRef = m[2].replace('#', '');
+      const style = presentationStyleMap.get(styleRef) || curveStyleMap.get(styleRef);
+      if (style) {
+        entityStyleMap.set(targetRef, style);
+      }
+    }
+  };
+
+  entityMap.forEach((ent) => {
+    if (ent.type === 'STYLED_ITEM') {
+      scanStyledItem(`STYLED_ITEM(${ent.rawArgs})`);
+    } else if (ent.type === 'COMPLEX') {
+      scanStyledItem(ent.rawArgs);
+    }
+  });
+
   // 7. 各エンティティのジオメトリ変換
   entityMap.forEach((ent, entId) => {
     // 複合エンティティの場合は内部のサブエンティティを順に処理、通常エンティティはそのまま
@@ -670,6 +749,20 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
     const layerDef = layerDefMap.get(layer);
     const defaultColor = layerDef?.color || resolveCadColor(layer);
 
+    // スタイルの決定: STYLED_ITEM直接参照 -> レイヤー名インテリジェント推測 -> デフォルト
+    const entStyle = entityStyleMap.get(entId);
+    const isCenterLayer = /CEN|CENTER|基準線|中心線/i.test(layer);
+    const isHiddenLayer = /HID|HIDDEN|隠れ線/i.test(layer);
+    const isTitleLayer = /TTL|FRAME|図面枠|表題/i.test(layer);
+    const isDimLayer = /DIM|寸法/i.test(layer);
+    const isStrLayer = /STR|構造|外形/i.test(layer);
+
+    const resolvedLineType: CadLineType = entStyle?.font 
+      || (isCenterLayer ? 'chain' : isHiddenLayer ? 'dashed' : 'continuous');
+    const resolvedLineWidthMm = entStyle?.widthMm 
+      || (isTitleLayer ? 0.70 : isStrLayer ? 0.35 : isDimLayer ? 0.13 : 0.25);
+    const finalColor = entStyle?.color || defaultColor;
+
     for (const targetEnt of subList) {
       const type = targetEnt.type;
       const args = parseArgs(targetEnt.rawArgs);
@@ -709,8 +802,10 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
             type: 'line',
             p1: transformCadPoint(p1, mat),
             p2: transformCadPoint(p2, mat),
-            color: defaultColor,
+            color: finalColor,
             layer,
+            lineType: resolvedLineType,
+            lineWidthMm: resolvedLineWidthMm,
           });
         }
       }
@@ -734,8 +829,10 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
             entities.push({
               type: 'polyline',
               points: pts,
-              color: defaultColor,
+              color: finalColor,
               layer,
+              lineType: resolvedLineType,
+              lineWidthMm: resolvedLineWidthMm,
             });
           }
         }
@@ -782,8 +879,10 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
                 type: 'line',
                 p1: transformCadPoint(p1, mat),
                 p2: transformCadPoint(p2, mat),
-                color: defaultColor,
+                color: finalColor,
                 layer,
+                lineType: resolvedLineType,
+                lineWidthMm: resolvedLineWidthMm,
               });
               continue;
             }
@@ -912,8 +1011,10 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
             endAngle: endAngle + rotationAngle,
             isArc,
             clockwise,
-            color: defaultColor,
+            color: finalColor,
             layer,
+            lineType: resolvedLineType,
+            lineWidthMm: resolvedLineWidthMm,
           });
         }
       }

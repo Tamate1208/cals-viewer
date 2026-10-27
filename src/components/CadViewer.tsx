@@ -16,7 +16,9 @@ import {
   Search,
   PanelRightClose,
   PanelRightOpen,
-  Info
+  Info,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { parseP21Text, parseSfcBuffer, extractCleanCadText, type CadDrawing } from '../utils/sxfParser';
 
@@ -42,6 +44,9 @@ export const CadViewer: React.FC<CadViewerProps> = ({
   const [drawing, setDrawing] = useState<CadDrawing | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // 背景テーマ: 'dark' (CAD黒) / 'light' (PDF印刷白)
+  const [colorTheme, setColorTheme] = useState<'dark' | 'light'>('dark');
 
   // パン・ズーム変換パラメータ
   const [transform, setTransform] = useState<{ x: number; y: number; k: number }>({ x: 0, y: 0, k: 1 });
@@ -176,25 +181,77 @@ export const CadViewer: React.FC<CadViewerProps> = ({
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    // 背景 (深いCADダークネイビー)
-    ctx.fillStyle = '#090d16';
+    // 背景 (CADダークネイビー または 印刷用紙ピュアホワイト)
+    ctx.fillStyle = colorTheme === 'dark' ? '#090d16' : '#ffffff';
     ctx.fillRect(0, 0, cw, ch);
 
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.k, invertY ? -transform.k : transform.k);
 
-    ctx.lineWidth = Math.max(0.5, 1.2 / transform.k);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+
+    // 白背景（印刷様式）時の高視認性カラー補正
+    const resolveColor = (rawColor?: string): string => {
+      if (colorTheme === 'dark') {
+        return rawColor || '#38bdf8';
+      }
+      if (!rawColor) return '#0f172a';
+      const c = rawColor.toLowerCase().trim();
+      // 白・薄灰 -> 黒・濃スレート
+      if (c === '#f8fafc' || c === '#ffffff' || c === 'white' || c === '#fff') return '#0f172a';
+      if (c === '#f1f5f9' || c === '#e2e8f0' || c === '#cbd5e1') return '#334155';
+      // 黄 -> 濃アンバー/茶
+      if (c === '#facc15' || c === 'yellow' || c === '#ffff00') return '#b45309';
+      // シアン -> 濃ロイヤルブルー
+      if (c === '#38bdf8' || c === '#22d3ee' || c === 'cyan' || c === '#00ffff') return '#0284c7';
+      // 緑 -> 濃緑
+      if (c === '#4ade80' || c === 'green' || c === '#00ff00') return '#15803d';
+      // マゼンタ -> 濃紫
+      if (c === '#c084fc' || c === 'magenta') return '#7e22ce';
+      // 赤 -> 真紅
+      if (c === '#f87171' || c === 'red' || c === '#ff0000') return '#dc2626';
+      // 青 -> 濃紺
+      if (c === '#60a5fa' || c === 'blue') return '#1d4ed8';
+      return rawColor;
+    };
+
+    // 線種および線幅の適用ヘルパー
+    const applyStrokeProps = (ent: { color?: string; lineType?: string; lineWidthMm?: number }) => {
+      const color = resolveColor(ent.color);
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+
+      // 線幅（mm）からCanvasピクセル幅を計算（ズーム倍率を考慮）
+      const mm = ent.lineWidthMm || 0.25;
+      const basePx = mm * 3.5;
+      const scaledWidth = basePx / transform.k;
+      // 画面上で見失わないよう最小0.4px、最大10pxにクランプ
+      ctx.lineWidth = Math.max(0.4 / transform.k, Math.min(scaledWidth, 10 / transform.k));
+
+      // 線種パターン (Canvas ctx.setLineDash)
+      const lType = ent.lineType || 'continuous';
+      if (lType === 'chain') {
+        // 一点鎖線: [長線, 空白, 点, 空白]
+        ctx.setLineDash([14 / transform.k, 4 / transform.k, 2.5 / transform.k, 4 / transform.k]);
+      } else if (lType === 'dashed') {
+        // 破線: [線, 空白]
+        ctx.setLineDash([7 / transform.k, 4 / transform.k]);
+      } else if (lType === 'phantom') {
+        // 二点鎖線: [長線, 空白, 点, 空白, 点, 空白]
+        ctx.setLineDash([16 / transform.k, 3.5 / transform.k, 2.5 / transform.k, 3.5 / transform.k, 2.5 / transform.k, 3.5 / transform.k]);
+      } else {
+        // 実線
+        ctx.setLineDash([]);
+      }
+    };
 
     for (const ent of drawing.entities) {
       if (ent.layer && hiddenLayers.has(ent.layer)) continue;
 
-      ctx.strokeStyle = ent.color || '#38bdf8';
-      ctx.fillStyle = ent.color || '#38bdf8';
-
       // 線分
       if (ent.type === 'line') {
+        applyStrokeProps(ent);
         ctx.beginPath();
         ctx.moveTo(ent.p1.x, ent.p1.y);
         ctx.lineTo(ent.p2.x, ent.p2.y);
@@ -203,6 +260,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       // ポリライン
       else if (ent.type === 'polyline') {
         if (ent.points.length < 2) continue;
+        applyStrokeProps(ent);
         ctx.beginPath();
         ctx.moveTo(ent.points[0].x, ent.points[0].y);
         for (let i = 1; i < ent.points.length; i++) {
@@ -213,6 +271,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       }
       // 円・円弧
       else if (ent.type === 'circle') {
+        applyStrokeProps(ent);
         ctx.beginPath();
         if (ent.isArc && ent.startAngle !== undefined && ent.endAngle !== undefined) {
           // STEP仕様: clockwise === false (.T.) -> 角度増加方向 (Canvasの anticlockwise = false)
@@ -227,6 +286,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       // 文字・寸法値
       else if (ent.type === 'text') {
         ctx.save();
+        ctx.setLineDash([]);
         ctx.translate(ent.position.x, ent.position.y);
 
         if (ent.angle) {
@@ -244,7 +304,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         ctx.font = `${renderHeight}px "Yu Gothic", "Meiryo", sans-serif`;
         ctx.textAlign = ent.align || 'left';
         ctx.textBaseline = ent.baseline || (invertY ? 'top' : 'bottom');
-        ctx.fillStyle = ent.color || '#f8fafc';
+        ctx.fillStyle = resolveColor(ent.color || '#f8fafc');
 
         // 描画テキストの安全サニタイズ（制御文字の混入を絶対防止）
         const cleaned = extractCleanCadText(ent.text);
@@ -262,7 +322,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
     }
 
     ctx.restore();
-  }, [drawing, transform, invertY, hiddenLayers]);
+  }, [drawing, transform, invertY, hiddenLayers, colorTheme]);
 
   useEffect(() => {
     renderCanvas();
@@ -430,13 +490,29 @@ export const CadViewer: React.FC<CadViewerProps> = ({
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
-          className="flex-1 h-full relative overflow-hidden bg-slate-950 cursor-grab active:cursor-grabbing"
+          className={`flex-1 h-full relative overflow-hidden cursor-grab active:cursor-grabbing transition-colors ${
+            colorTheme === 'light' ? 'bg-slate-100' : 'bg-slate-950'
+          }`}
         >
           {/* Canvas本体 */}
           <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
 
-          {/* Canvas上のフローティング操作バー（ズーム・リセット） */}
+          {/* Canvas上のフローティング操作バー（ズーム・リセット・背景切替） */}
           <div className="absolute top-3 left-3 flex items-center gap-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 p-1 rounded-xl shadow-lg pointer-events-auto z-10">
+            {/* 背景モード切替（CAD黒 ⇄ 印刷白） */}
+            <button
+              onClick={() => setColorTheme(colorTheme === 'dark' ? 'light' : 'dark')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                colorTheme === 'light'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+              title={colorTheme === 'dark' ? '印刷プレビュー（白背景・PDF様式）に切り替え' : 'CAD画面（黒背景）に切り替え'}
+            >
+              {colorTheme === 'dark' ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5" />}
+              <span className="text-[11px] font-medium">{colorTheme === 'dark' ? '印刷様式 (白)' : 'CAD (黒)'}</span>
+            </button>
+            <div className="w-[1px] h-4 bg-slate-700 mx-0.5" />
             <button
               onClick={() => setInvertY(!invertY)}
               className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition"
