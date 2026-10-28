@@ -4,6 +4,9 @@ services:
     env: static
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.4
     pullRequestPreviewsEnabled: true
     routes:
       - type: rewrite
