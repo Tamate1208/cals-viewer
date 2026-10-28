@@ -484,8 +484,9 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
       const listRefs = (ent.rawArgs.match(/#\d+/g) || []).map(r => r.replace('#', ''));
       const queue = [...listRefs];
       const visited = new Set(queue);
-      while (queue.length > 0) {
-        const curId = queue.shift()!;
+      let head = 0;
+      while (head < queue.length) {
+        const curId = queue[head++];
         const mappedDef = mappedItemDefMap.get(curId);
         if (mappedDef) {
           let list = repChildren.get(repId);
