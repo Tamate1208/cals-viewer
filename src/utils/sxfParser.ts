@@ -150,7 +150,7 @@ export function extractCleanCadText(rawStr: string): {
   let baseline: 'top' | 'middle' | 'bottom' | 'alphabetic' = 'bottom';
   const lower = str.toLowerCase();
 
-  if (lower.includes('center')) align = 'center';
+  if (lower.includes('center') || lower.includes('centre')) align = 'center';
   else if (lower.includes('right')) align = 'right';
   else if (lower.includes('left')) align = 'left';
 
@@ -250,9 +250,14 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
 
     for (let i = 0; i < raw.length; i++) {
       const char = raw[i];
-      if (char === "'" && raw[i - 1] !== '\\') {
-        inQuote = !inQuote;
-        current += char;
+      if (char === "'") {
+        if (inQuote && raw[i + 1] === "'") {
+          current += "''";
+          i++;
+        } else {
+          inQuote = !inQuote;
+          current += char;
+        }
       } else if (!inQuote && (char === '(' || char === '[')) {
         depth++;
         current += char;
@@ -1215,6 +1220,8 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
   }
   const textSummary = Array.from(textSummarySet);
 
+  completeMissingFrameBorders(entities);
+
   const bounds = calculateBounds(entities);
 
   return {
@@ -1399,6 +1406,8 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
   }
   const textSummary = Array.from(textSummarySet);
 
+  completeMissingFrameBorders(entities);
+
   const bounds = calculateBounds(entities);
 
   return {
@@ -1409,6 +1418,67 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
     fileName,
     format: 'SFC',
   };
+}
+
+/**
+ * 図面外枠・内枠の左右縦線補完
+ * CADソフトウェアによっては外枠・内枠の縦線を用紙・ビューポート境界として暗黙表示するため、
+ * データ上に上下横線しか記録されていない場合に左右の縦枠線を追加して四角形として閉じる
+ */
+function completeMissingFrameBorders(entities: CadEntity[]) {
+  for (const ttlLayer of ['D-TTL', 'D-TTL-LINE']) {
+    const hLines = entities.filter(
+      (e): e is CadLine => e.layer === ttlLayer && e.type === 'line' && Math.abs(e.p1.y - e.p2.y) < 0.1
+    );
+    if (hLines.length >= 2) {
+      // 最も長い2本の横線（上辺と下辺）を検出
+      hLines.sort((a, b) => Math.abs(b.p2.x - b.p1.x) - Math.abs(a.p2.x - a.p1.x));
+      const l1 = hLines[0];
+      const l2 = hLines[1];
+      const minX1 = Math.min(l1.p1.x, l1.p2.x);
+      const maxX1 = Math.max(l1.p1.x, l1.p2.x);
+      const minX2 = Math.min(l2.p1.x, l2.p2.x);
+      const maxX2 = Math.max(l2.p1.x, l2.p2.x);
+      // 横線の幅が50mm以上あり、始点・終点がほぼ一致している場合
+      if (Math.abs(maxX1 - minX1) > 50 && Math.abs(minX1 - minX2) < 2.0 && Math.abs(maxX1 - maxX2) < 2.0) {
+        const leftX = (minX1 + minX2) / 2;
+        const rightX = (maxX1 + maxX2) / 2;
+        const bottomY = Math.min(l1.p1.y, l2.p1.y);
+        const topY = Math.max(l1.p1.y, l2.p1.y);
+
+        // 既存の縦線があるかチェック
+        const hasLeftV = entities.some(
+          (e) => e.layer === ttlLayer && e.type === 'line' && Math.abs(e.p1.x - leftX) < 1.0 && Math.abs(e.p2.x - leftX) < 1.0 && Math.abs(Math.abs(e.p1.y - e.p2.y) - (topY - bottomY)) < 2.0
+        );
+        const hasRightV = entities.some(
+          (e) => e.layer === ttlLayer && e.type === 'line' && Math.abs(e.p1.x - rightX) < 1.0 && Math.abs(e.p2.x - rightX) < 1.0 && Math.abs(Math.abs(e.p1.y - e.p2.y) - (topY - bottomY)) < 2.0
+        );
+
+        if (!hasLeftV) {
+          entities.push({
+            type: 'line',
+            p1: { x: leftX, y: bottomY },
+            p2: { x: leftX, y: topY },
+            color: l1.color,
+            layer: ttlLayer,
+            lineType: l1.lineType,
+            lineWidthMm: l1.lineWidthMm,
+          });
+        }
+        if (!hasRightV) {
+          entities.push({
+            type: 'line',
+            p1: { x: rightX, y: bottomY },
+            p2: { x: rightX, y: topY },
+            color: l1.color,
+            layer: ttlLayer,
+            lineType: l1.lineType,
+            lineWidthMm: l1.lineWidthMm,
+          });
+        }
+      }
+    }
+  }
 }
 
 /**

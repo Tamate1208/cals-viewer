@@ -290,7 +290,7 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         ctx.translate(ent.position.x, ent.position.y);
 
         if (ent.angle) {
-          ctx.rotate(invertY ? -ent.angle : ent.angle);
+          ctx.rotate(invertY ? ent.angle : -ent.angle);
         }
 
         if (invertY) {
