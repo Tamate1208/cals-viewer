@@ -366,6 +366,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
                         src={photo.fileUrl}
                         alt={photo.title}
                         loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-contain rounded transition duration-200 group-hover:scale-[1.02]"
                       />
                     ) : (
@@ -591,6 +592,7 @@ export const PhotoViewer: React.FC<PhotoViewerProps> = ({
               <img
                 src={lightboxPhoto.fileUrl}
                 alt={lightboxPhoto.title}
+                decoding="async"
                 style={{ transform: `scale(${lightboxZoom})` }}
                 className="max-w-full max-h-full object-contain transition-transform duration-150 select-none shadow-2xl rounded"
               />
