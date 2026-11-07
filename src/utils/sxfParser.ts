@@ -1671,7 +1671,9 @@ export function parseSfcText(content: string, fileName: string = ''): CadDrawing
  * SFC (バイナリ/ZIPまたはテキスト形式) のパース
  */
 export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = ''): Promise<CadDrawing> {
-  const bytes = new Uint8Array(buffer);
+  const bytes = buffer instanceof ArrayBuffer
+    ? new Uint8Array(buffer)
+    : new Uint8Array((buffer as any).buffer, (buffer as any).byteOffset || 0, (buffer as any).byteLength || (buffer as any).length);
 
   // 1. もし ZIP 形式 (PK\x03\x04) の場合
   if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
@@ -1699,12 +1701,9 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
         const u8 = await zip.files[targetFile].async('uint8array');
         let text = '';
         try {
-          text = new TextDecoder('shift-jis').decode(u8);
-          if (!text.includes('SXF')) {
-            text = new TextDecoder('utf-8').decode(u8);
-          }
+          text = new TextDecoder('utf-8', { fatal: true }).decode(u8);
         } catch {
-          text = new TextDecoder('utf-8').decode(u8);
+          text = new TextDecoder('shift-jis').decode(u8);
         }
         return parseSfcText(text, fileName);
       }
@@ -1713,15 +1712,24 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
     }
   }
 
-  // 2. SFC 直接テキスト解析 (Shift-JIS 優先、フォールバック UTF-8)
+  // 2. SFC 直接テキスト解析 (UTF-8 厳格テスト -> Shift-JIS (CP932) 自動判別)
   let text = '';
   try {
-    text = new TextDecoder('shift-jis').decode(bytes);
-    if (!text.includes('SXF') && !text.includes('feature')) {
-      text = new TextDecoder('utf-8').decode(bytes);
+    const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+    const utf8Candidate = utf8Decoder.decode(bytes);
+    if (utf8Candidate.includes('SXF') || utf8Candidate.includes('feature') || utf8Candidate.includes('#')) {
+      text = utf8Candidate;
     }
   } catch {
-    text = new TextDecoder('utf-8').decode(bytes);
+    // UTF-8 デコード失敗（Shift-JIS などの多バイト文字違反）時は Shift-JIS で処理
+  }
+
+  if (!text) {
+    try {
+      text = new TextDecoder('shift-jis').decode(bytes);
+    } catch {
+      text = new TextDecoder('utf-8').decode(bytes);
+    }
   }
 
   return parseSfcText(text, fileName);
