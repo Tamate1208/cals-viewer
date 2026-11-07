@@ -1235,137 +1235,384 @@ export function parseP21Text(content: string, fileName: string = ''): CadDrawing
 }
 
 /**
- * SFC (バイナリ形式) のパース
+ * SFC 引数解析ヘルパー (カンマ区切り、クォート考慮)
  */
-export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = ''): Promise<CadDrawing> {
-  const bytes = new Uint8Array(buffer);
+function parseSfcArgs(argStr: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuote = false;
+  let quoteChar = '';
 
-  // 1. もし ZIP 形式 (PK\x03\x04) の場合
-  if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
-    try {
-      const zip = await JSZip.loadAsync(buffer);
-      const files = Object.keys(zip.files);
-      const p21File = files.find(f => /\.(p21|step|stp)$/i.test(f)) || files.find(f => !zip.files[f].dir);
-      if (p21File) {
-        const u8 = await zip.files[p21File].async('uint8array');
-        let text = '';
-        try {
-          text = new TextDecoder('utf-8', { fatal: true }).decode(u8);
-        } catch {
-          text = new TextDecoder('shift-jis').decode(u8);
-        }
-        const drawing = parseP21Text(text, fileName);
-        drawing.format = 'SFC';
-        return drawing;
-      }
-    } catch (e) {
-      console.warn('SFC ZIP解凍に失敗、バイナリ直接スキャンへ移行します:', e);
-    }
-  }
-
-  // 2. SFC 直接バイナリスキャン
-  const entities: CadEntity[] = [];
-  const view = new DataView(buffer);
-  const len = buffer.byteLength;
-
-  let decoder: TextDecoder;
-  try {
-    decoder = new TextDecoder('shift-jis');
-  } catch {
-    decoder = new TextDecoder('utf-8');
-  }
-
-  const extractedPoints: CadPoint[] = [];
-  const isValidCoord = (v: number) => !isNaN(v) && Math.abs(v) > 0.001 && Math.abs(v) < 5000000;
-
-  for (let offset = 64; offset < len - 16; offset += 4) {
-    if (offset + 16 <= len) {
-      const x = view.getFloat64(offset, true);
-      const y = view.getFloat64(offset + 8, true);
-      if (isValidCoord(x) && isValidCoord(y)) {
-        extractedPoints.push({ x, y });
-        offset += 12;
-        continue;
-      }
-    }
-
-    if (offset + 8 <= len) {
-      const x32 = view.getFloat32(offset, true);
-      const y32 = view.getFloat32(offset + 4, true);
-      if (isValidCoord(x32) && isValidCoord(y32)) {
-        extractedPoints.push({ x: x32, y: y32 });
-        offset += 4;
-        continue;
-      }
-    }
-  }
-
-  if (extractedPoints.length >= 2) {
-    let currentPoly: CadPoint[] = [extractedPoints[0]];
-
-    for (let i = 1; i < extractedPoints.length; i++) {
-      const pPrev = extractedPoints[i - 1];
-      const pCurr = extractedPoints[i];
-      const dist = Math.hypot(pCurr.x - pPrev.x, pCurr.y - pPrev.y);
-
-      if (dist < 50000) {
-        currentPoly.push(pCurr);
+  for (let i = 0; i < argStr.length; i++) {
+    const ch = argStr[i];
+    if ((ch === "'" || ch === '"') && !inQuote) {
+      inQuote = true;
+      quoteChar = ch;
+    } else if (ch === quoteChar && inQuote) {
+      if (i + 1 < argStr.length && argStr[i + 1] === quoteChar) {
+        current += quoteChar;
+        i++; // エスケープされた引用符
       } else {
-        if (currentPoly.length >= 2) {
+        inQuote = false;
+        quoteChar = '';
+      }
+    } else if (ch === ',' && !inQuote) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim().length > 0 || result.length > 0) {
+    result.push(current.trim());
+  }
+  return result;
+}
+
+/**
+ * SFC (SXF Feature Comment形式) のテキストパース
+ */
+export function parseSfcText(content: string, fileName: string = ''): CadDrawing {
+  const entities: CadEntity[] = [];
+
+  // レイヤー、色、線種、線幅のマッピングテーブル
+  const layerMap = new Map<number, string>();
+  const colorMap = new Map<number, string>();
+  const lineTypeMap = new Map<number, CadLineType>();
+  const lineWidthMap = new Map<number, number>();
+
+  // SXF標準16色の初期設定
+  const defaultColors: Record<number, string> = {
+    1: '#ffffff', // 1: 黒/白（CADダーク画面では白、印刷では黒）
+    2: '#ef4444', // 2: 赤
+    3: '#22c55e', // 3: 緑
+    4: '#3b82f6', // 4: 青
+    5: '#eab308', // 5: 黄
+    6: '#d946ef', // 6: マゼンタ
+    7: '#06b6d4', // 7: シアン
+    8: '#94a3b8', // 8: 白/黒（薄灰）
+    9: '#64748b',
+    10: '#b91c1c',
+    11: '#15803d',
+    12: '#1d4ed8',
+    13: '#a16207',
+    14: '#a21caf',
+    15: '#0e7490',
+    16: '#334155',
+  };
+  for (const [k, v] of Object.entries(defaultColors)) {
+    colorMap.set(Number(k), v);
+  }
+
+  // SXF標準線種
+  const defaultLineTypes: Record<number, CadLineType> = {
+    1: 'continuous', // 実線
+    2: 'dashed',     // 破線
+    3: 'chain',      // 一点鎖線
+    4: 'phantom',    // 二点鎖線
+  };
+  for (const [k, v] of Object.entries(defaultLineTypes)) {
+    lineTypeMap.set(Number(k), v);
+  }
+
+  // SXF標準線幅 (mm)
+  const defaultLineWidths: Record<number, number> = {
+    1: 0.13,
+    2: 0.18,
+    3: 0.25,
+    4: 0.35,
+    5: 0.50,
+    6: 0.70,
+    7: 1.00,
+    8: 1.40,
+    9: 2.00,
+  };
+  for (const [k, v] of Object.entries(defaultLineWidths)) {
+    lineWidthMap.set(Number(k), v);
+  }
+
+  // コメントブロック /*SXF ... SXF*/ の内部を抽出（またはファイル全体）
+  let sxfBody = content;
+  const matchBlock = content.match(/\/\*SXF([\s\S]*?)SXF\*\//i);
+  if (matchBlock && matchBlock[1]) {
+    sxfBody = matchBlock[1];
+  }
+
+  // ステートメントの抽出: #ID = feature_name(args...)
+  const stmtRegex = /#(\d+)\s*=\s*([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*\.?/g;
+  let match: RegExpExecArray | null;
+
+  interface SfcStatement {
+    id: number;
+    name: string;
+    rawArgs: string;
+    args: string[];
+  }
+  const statements: SfcStatement[] = [];
+
+  while ((match = stmtRegex.exec(sxfBody)) !== null) {
+    const id = parseInt(match[1], 10);
+    const name = match[2].toLowerCase();
+    const rawArgs = match[3];
+    const args = parseSfcArgs(rawArgs).map(a => {
+      // クォート除去
+      if ((a.startsWith("'") && a.endsWith("'")) || (a.startsWith('"') && a.endsWith('"'))) {
+        return a.slice(1, -1);
+      }
+      return a;
+    });
+
+    statements.push({ id, name, rawArgs, args });
+  }
+
+  // 1. まずテーブル定義（レイヤー、色、線種、線幅）を走査
+  for (const stmt of statements) {
+    const { name, args } = stmt;
+
+    // レイヤー定義
+    if (name === 'sxf_table_layer' || name === 'layer_feature') {
+      if (args.length >= 2) {
+        for (let i = 0; i < args.length; i += 5) {
+          const lId = parseInt(args[i], 10);
+          const lName = args[i + 1];
+          if (!isNaN(lId) && lName) {
+            layerMap.set(lId, lName);
+          }
+        }
+      }
+    }
+    // 色テーブル
+    else if (name === 'sxf_table_color' || name === 'color_feature') {
+      if (args.length >= 4) {
+        for (let i = 0; i < args.length; i += 4) {
+          const cId = parseInt(args[i], 10);
+          const r = parseInt(args[i + 1], 10);
+          const g = parseInt(args[i + 2], 10);
+          const b = parseInt(args[i + 3], 10);
+          if (!isNaN(cId) && !isNaN(r) && !isNaN(g) && !isNaN(b)) {
+            colorMap.set(cId, `rgb(${r},${g},${b})`);
+          }
+        }
+      }
+    }
+    // 線種テーブル
+    else if (name === 'sxf_table_line_type' || name === 'line_type_feature') {
+      if (args.length >= 2) {
+        for (let i = 0; i < args.length; i += 2) {
+          const tId = parseInt(args[i], 10);
+          const tCode = parseInt(args[i + 1], 10);
+          if (!isNaN(tId) && defaultLineTypes[tCode]) {
+            lineTypeMap.set(tId, defaultLineTypes[tCode]);
+          }
+        }
+      }
+    }
+    // 線幅テーブル
+    else if (name === 'sxf_table_line_width' || name === 'line_width_feature') {
+      if (args.length >= 2) {
+        for (let i = 0; i < args.length; i += 2) {
+          const wId = parseInt(args[i], 10);
+          const widthMm = parseFloat(args[i + 1]);
+          if (!isNaN(wId) && !isNaN(widthMm)) {
+            lineWidthMap.set(wId, widthMm);
+          }
+        }
+      }
+    }
+  }
+
+  // 属性解決ヘルパー
+  const resolveProps = (layerVal: string, colorVal: string, lineTypeVal?: string, lineWidthVal?: string) => {
+    const lId = parseInt(layerVal, 10);
+    const layer = layerMap.get(lId) || (lId ? `レイヤ ${lId}` : '一般 (S-C)');
+
+    const cId = parseInt(colorVal, 10);
+    const color = colorMap.get(cId) || '#38bdf8';
+
+    const ltId = lineTypeVal ? parseInt(lineTypeVal, 10) : 1;
+    const lineType = lineTypeMap.get(ltId) || 'continuous';
+
+    const lwId = lineWidthVal ? parseInt(lineWidthVal, 10) : 1;
+    const lineWidthMm = lineWidthMap.get(lwId) || 0.25;
+
+    return { layer, color, lineType, lineWidthMm };
+  };
+
+  // 2. 図形要素のパース
+  for (const stmt of statements) {
+    const { name, args } = stmt;
+
+    // --- A. 直線 (line_feature / sxf_line) ---
+    if (name === 'line_feature' || name === 'sxf_line') {
+      const numArgs = args.map(a => parseFloat(a)).filter(n => !isNaN(n));
+      if (numArgs.length >= 4) {
+        const x2 = numArgs[numArgs.length - 2];
+        const y2 = numArgs[numArgs.length - 1];
+        const x1 = numArgs[numArgs.length - 4];
+        const y1 = numArgs[numArgs.length - 3];
+
+        const { layer, color, lineType, lineWidthMm } = resolveProps(args[0], args[1], args[2], args[3]);
+        entities.push({
+          type: 'line',
+          p1: { x: x1, y: y1 },
+          p2: { x: x2, y: y2 },
+          color,
+          layer,
+          lineType,
+          lineWidthMm,
+        });
+      }
+    }
+
+    // --- B. 円 (circle_feature / sxf_circle) ---
+    else if (name === 'circle_feature' || name === 'sxf_circle') {
+      const numArgs = args.map(a => parseFloat(a)).filter(n => !isNaN(n));
+      if (numArgs.length >= 3) {
+        const r = numArgs[numArgs.length - 1];
+        const cy = numArgs[numArgs.length - 2];
+        const cx = numArgs[numArgs.length - 3];
+
+        if (r > 0.05 && r < 500000) {
+          const { layer, color, lineType, lineWidthMm } = resolveProps(args[0], args[1], args[2], args[3]);
           entities.push({
-            type: 'polyline',
-            points: currentPoly,
-            color: '#38bdf8',
-            layer: '構造物外形線 (S-C)',
+            type: 'circle',
+            center: { x: cx, y: cy },
+            radius: r,
+            isArc: false,
+            color,
+            layer,
+            lineType,
+            lineWidthMm,
           });
         }
-        currentPoly = [pCurr];
       }
     }
-    if (currentPoly.length >= 2) {
-      entities.push({
-        type: 'polyline',
-        points: currentPoly,
-        color: '#38bdf8',
-        layer: '構造物外形線 (S-C)',
-      });
-    }
-  }
 
-  // バイナリ内の文字列ブロック（注記・文字）の抽出
-  let textStart = -1;
-  for (let i = 0; i < len; i++) {
-    const b = bytes[i];
-    const isTextByte = (b >= 0x20 && b <= 0x7E) || (b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC);
-    if (isTextByte) {
-      if (textStart === -1) textStart = i;
-    } else {
-      if (textStart !== -1 && i - textStart >= 4) {
-        const sub = bytes.subarray(textStart, i);
-        try {
-          const rawStr = decoder.decode(sub).trim();
-          if (rawStr.length >= 2 && !/^[\s\d_]+$/.test(rawStr)) {
-            const cleaned = extractCleanCadText(rawStr);
-            if (cleaned.isValid) {
-              const pos = extractedPoints[entities.length % Math.max(1, extractedPoints.length)] || { x: 50, y: 50 };
-              entities.push({
-                type: 'text',
-                text: cleaned.text,
-                position: { x: pos.x, y: pos.y },
-                height: 4.5,
-                color: '#f8fafc',
-                layer: '注記・文字 (M-T)',
-              });
-            }
-          }
-        } catch {
-          // ignore
+    // --- C. 円弧 (arc_feature / sxf_arc) ---
+    else if (name === 'arc_feature' || name === 'sxf_arc') {
+      const numArgs = args.map(a => parseFloat(a)).filter(n => !isNaN(n));
+      if (numArgs.length >= 5) {
+        const cx = numArgs[4] !== undefined && numArgs.length >= 7 ? numArgs[4] : numArgs[numArgs.length - 5];
+        const cy = numArgs[5] !== undefined && numArgs.length >= 7 ? numArgs[5] : numArgs[numArgs.length - 4];
+        const r = numArgs[6] !== undefined && numArgs.length >= 7 ? numArgs[6] : numArgs[numArgs.length - 3];
+        let ang1 = numArgs[numArgs.length - 2];
+        let ang2 = numArgs[numArgs.length - 1];
+
+        // 角度が度数法の場合はラジアンに変換
+        if (Math.abs(ang1) > 2 * Math.PI + 0.1 || Math.abs(ang2) > 2 * Math.PI + 0.1) {
+          ang1 = (ang1 * Math.PI) / 180;
+          ang2 = (ang2 * Math.PI) / 180;
+        }
+
+        const { layer, color, lineType, lineWidthMm } = resolveProps(args[0], args[1], args[2], args[3]);
+        entities.push({
+          type: 'circle',
+          center: { x: cx, y: cy },
+          radius: r,
+          startAngle: ang1,
+          endAngle: ang2,
+          isArc: true,
+          color,
+          layer,
+          lineType,
+          lineWidthMm,
+        });
+      }
+    }
+
+    // --- D. 文字 (text_feature / sxf_text) ---
+    else if (name === 'text_feature' || name === 'sxf_text') {
+      let textStr = '';
+      for (const a of args) {
+        if (isNaN(parseFloat(a)) && a.trim().length > 0) {
+          textStr = a.trim();
+          break;
         }
       }
-      textStart = -1;
+      if (!textStr && args.length >= 7) {
+        textStr = args[6] || args[args.length - 1];
+      }
+
+      if (textStr) {
+        const cleaned = extractCleanCadText(textStr);
+        if (cleaned.isValid && cleaned.text) {
+          const numArgs = args.map(a => parseFloat(a)).filter(n => !isNaN(n));
+
+          let x = 0;
+          let y = 0;
+          let height = 3.5;
+          let angle = 0;
+          let align: 'left' | 'center' | 'right' = cleaned.align || 'left';
+          let baseline: 'top' | 'middle' | 'bottom' | 'alphabetic' = cleaned.baseline || 'bottom';
+
+          if (numArgs.length >= 3) {
+            x = numArgs[numArgs.length - 2];
+            y = numArgs[numArgs.length - 1];
+
+            const possibleHeights = numArgs.filter(n => n >= 0.5 && n <= 50);
+            if (possibleHeights.length > 0) {
+              height = possibleHeights[0];
+            }
+
+            const possibleAngles = numArgs.filter(n => Math.abs(n) > 0.001 && n < 360);
+            if (possibleAngles.length > 1) {
+              const aVal = possibleAngles[possibleAngles.length - 1];
+              angle = Math.abs(aVal) > 2 * Math.PI + 0.1 ? (aVal * Math.PI) / 180 : aVal;
+            }
+          }
+
+          // SXFアライメントコード (1:左下, 2:中下, 3:右下, 4:左中, 5:中中, 6:右中, 7:左上, 8:中上, 9:右上)
+          const alignArg = parseInt(args[args.length - 1], 10);
+          if (!isNaN(alignArg) && alignArg >= 1 && alignArg <= 9) {
+            if ([1, 4, 7].includes(alignArg)) align = 'left';
+            else if ([2, 5, 8].includes(alignArg)) align = 'center';
+            else if ([3, 6, 9].includes(alignArg)) align = 'right';
+
+            if ([1, 2, 3].includes(alignArg)) baseline = 'bottom';
+            else if ([4, 5, 6].includes(alignArg)) baseline = 'middle';
+            else if ([7, 8, 9].includes(alignArg)) baseline = 'top';
+          }
+
+          const { layer, color } = resolveProps(args[0], args[1]);
+          entities.push({
+            type: 'text',
+            text: cleaned.text,
+            position: { x, y },
+            height: Math.max(1.2, Math.min(30, height)),
+            angle,
+            align,
+            baseline,
+            color: color === '#38bdf8' ? '#f8fafc' : color,
+            layer,
+          });
+        }
+      }
+    }
+
+    // --- E. 折れ線 (polyline_feature / sxf_polyline) ---
+    else if (name === 'polyline_feature' || name === 'sxf_polyline') {
+      const numArgs = args.map(a => parseFloat(a)).filter(n => !isNaN(n));
+      const pts: CadPoint[] = [];
+      const startIndex = numArgs.length % 2 === 0 ? 0 : 1;
+      for (let i = startIndex; i < numArgs.length - 1; i += 2) {
+        pts.push({ x: numArgs[i], y: numArgs[i + 1] });
+      }
+
+      if (pts.length >= 2) {
+        const { layer, color, lineType, lineWidthMm } = resolveProps(args[0], args[1], args[2], args[3]);
+        entities.push({
+          type: 'polyline',
+          points: pts,
+          color,
+          layer,
+          lineType,
+          lineWidthMm,
+        });
+      }
     }
   }
 
+  // フォールバック: 要素が何もない場合、図面外枠を生成
   if (entities.length === 0) {
     const w = 841;
     const h = 594;
@@ -1374,7 +1621,7 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
       { type: 'line', p1: { x: w, y: 0 }, p2: { x: w, y: h }, color: '#38bdf8', layer: '図面枠 (B-T)' },
       { type: 'line', p1: { x: w, y: h }, p2: { x: 0, y: h }, color: '#38bdf8', layer: '図面枠 (B-T)' },
       { type: 'line', p1: { x: 0, y: h }, p2: { x: 0, y: 0 }, color: '#38bdf8', layer: '図面枠 (B-T)' },
-      { type: 'text', text: `${fileName} (SFCバイナリ図面)`, position: { x: 30, y: 30 }, height: 12, color: '#93c5fd', layer: '注記・文字 (M-T)' }
+      { type: 'text', text: `${fileName} (SFC図面)`, position: { x: 30, y: 30 }, height: 12, color: '#93c5fd', layer: '注記・文字 (M-T)' }
     );
   }
 
@@ -1418,6 +1665,66 @@ export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = '')
     fileName,
     format: 'SFC',
   };
+}
+
+/**
+ * SFC (バイナリ/ZIPまたはテキスト形式) のパース
+ */
+export async function parseSfcBuffer(buffer: ArrayBuffer, fileName: string = ''): Promise<CadDrawing> {
+  const bytes = new Uint8Array(buffer);
+
+  // 1. もし ZIP 形式 (PK\x03\x04) の場合
+  if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
+    try {
+      const zip = await JSZip.loadAsync(buffer);
+      const files = Object.keys(zip.files);
+      const sfcFile = files.find(f => /\.sfc$/i.test(f));
+      const p21File = files.find(f => /\.(p21|step|stp)$/i.test(f)) || files.find(f => !zip.files[f].dir);
+
+      if (p21File && !sfcFile) {
+        const u8 = await zip.files[p21File].async('uint8array');
+        let text = '';
+        try {
+          text = new TextDecoder('utf-8', { fatal: true }).decode(u8);
+        } catch {
+          text = new TextDecoder('shift-jis').decode(u8);
+        }
+        const drawing = parseP21Text(text, fileName);
+        drawing.format = 'SFC';
+        return drawing;
+      }
+
+      const targetFile = sfcFile || p21File;
+      if (targetFile) {
+        const u8 = await zip.files[targetFile].async('uint8array');
+        let text = '';
+        try {
+          text = new TextDecoder('shift-jis').decode(u8);
+          if (!text.includes('SXF')) {
+            text = new TextDecoder('utf-8').decode(u8);
+          }
+        } catch {
+          text = new TextDecoder('utf-8').decode(u8);
+        }
+        return parseSfcText(text, fileName);
+      }
+    } catch (e) {
+      console.warn('SFC ZIP解凍に失敗、直接テキスト解析へ移行します:', e);
+    }
+  }
+
+  // 2. SFC 直接テキスト解析 (Shift-JIS 優先、フォールバック UTF-8)
+  let text = '';
+  try {
+    text = new TextDecoder('shift-jis').decode(bytes);
+    if (!text.includes('SXF') && !text.includes('feature')) {
+      text = new TextDecoder('utf-8').decode(bytes);
+    }
+  } catch {
+    text = new TextDecoder('utf-8').decode(bytes);
+  }
+
+  return parseSfcText(text, fileName);
 }
 
 /**

@@ -287,14 +287,19 @@ export const CadViewer: React.FC<CadViewerProps> = ({
       else if (ent.type === 'text') {
         ctx.save();
         ctx.setLineDash([]);
+
+        // 1. 文字配置点へ移動
         ctx.translate(ent.position.x, ent.position.y);
 
-        if (ent.angle) {
-          ctx.rotate(invertY ? ent.angle : -ent.angle);
-        }
-
+        // 2. CADのY上向き座標系から画面の正立（Y下向き）へ反転
         if (invertY) {
           ctx.scale(1, -1);
+        }
+
+        // 3. 正立した文字空間において、CADの角度（反時計回り）を適用
+        // Canvas（Y下向き）では反時計回り回転は負の角度
+        if (ent.angle) {
+          ctx.rotate(-ent.angle);
         }
 
         const rawHeight = ent.height || 2.5;
@@ -303,9 +308,6 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         const renderHeight = screenPx < 3.5 ? 3.5 / transform.k : rawHeight;
 
         ctx.font = `${renderHeight}px "Yu Gothic", "Meiryo", sans-serif`;
-        ctx.textAlign = ent.align || 'left';
-        ctx.textBaseline = ent.baseline || (invertY ? 'top' : 'bottom');
-        ctx.fillStyle = resolveColor(ent.color || '#f8fafc');
 
         // 描画テキストの安全サニタイズ（制御文字の混入を絶対防止）
         const cleaned = extractCleanCadText(ent.text);
@@ -315,7 +317,11 @@ export const CadViewer: React.FC<CadViewerProps> = ({
         }
 
         ctx.textAlign = cleaned.align || ent.align || 'left';
-        ctx.textBaseline = cleaned.baseline || ent.baseline || (invertY ? 'top' : 'bottom');
+        // 正立座標系（Y下向き）でのベースライン:
+        // CADの 'bottom' は文字下端（bottom）、'top' は文字上端（top）、'middle' は中央（middle）
+        ctx.textBaseline = cleaned.baseline || ent.baseline || 'bottom';
+        ctx.fillStyle = resolveColor(ent.color || '#f8fafc');
+
         ctx.fillText(cleaned.text, 0, 0);
 
         ctx.restore();
